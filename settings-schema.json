@@ -1,0 +1,98 @@
+{
+  "layout": {
+    "type": "layout",
+    "pages": ["connection-page", "display-page"],
+    "connection-page": {
+      "type": "page",
+      "title": "Connection",
+      "sections": ["connection-section", "polling-section"]
+    },
+    "display-page": {
+      "type": "page",
+      "title": "Display",
+      "sections": ["panel-section", "details-section"]
+    },
+    "connection-section": {
+      "type": "section",
+      "title": "Clankermux API",
+      "keys": ["api-url", "connection-note"]
+    },
+    "polling-section": {
+      "type": "section",
+      "title": "Polling",
+      "keys": ["refresh-interval", "request-timeout"]
+    },
+    "panel-section": {
+      "type": "section",
+      "title": "Panel",
+      "keys": ["panel-bar-width", "show-panel-percentages", "warning-threshold"]
+    },
+    "details-section": {
+      "type": "section",
+      "title": "Popup",
+      "keys": ["show-scoped-limits", "primary-first"]
+    }
+  },
+  "api-url": {
+    "type": "entry",
+    "default": "http://127.0.0.1:8080",
+    "description": "Server URL (hostname or IP address)",
+    "tooltip": "Base URL of the Clankermux management API, for example http://127.0.0.1:8080 or http://clankermux.example.test:8080"
+  },
+  "connection-note": {
+    "type": "label",
+    "description": "The applet reads /health?detail=1 and /api/accounts. Enter a complete HTTP or HTTPS URL above; hostnames and IP addresses are both supported. Clankermux management endpoints do not require an API key, so prefer localhost, a trusted LAN, or an SSH tunnel."
+  },
+  "refresh-interval": {
+    "type": "spinbutton",
+    "default": 30,
+    "min": 10,
+    "max": 900,
+    "step": 10,
+    "units": "seconds",
+    "description": "Refresh every"
+  },
+  "request-timeout": {
+    "type": "spinbutton",
+    "default": 8,
+    "min": 2,
+    "max": 60,
+    "step": 1,
+    "units": "seconds",
+    "description": "Request timeout"
+  },
+  "panel-bar-width": {
+    "type": "spinbutton",
+    "default": 52,
+    "min": 30,
+    "max": 100,
+    "step": 2,
+    "units": "pixels",
+    "description": "Width of each panel progress bar"
+  },
+  "show-panel-percentages": {
+    "type": "switch",
+    "default": true,
+    "description": "Show percentages beside panel bars"
+  },
+  "warning-threshold": {
+    "type": "spinbutton",
+    "default": 80,
+    "min": 50,
+    "max": 99,
+    "step": 1,
+    "units": "%",
+    "description": "Turn pooled bars orange at this projected usage",
+    "tooltip": "A single account at risk does not change a pooled bar. Red is reserved for confident exhaustion of the whole pool."
+  },
+  "show-scoped-limits": {
+    "type": "switch",
+    "default": true,
+    "description": "Show model-specific limits in the panel and popup"
+  },
+  "primary-first": {
+    "type": "switch",
+    "default": true,
+    "description": "Put the currently selected account first"
+  }
+}

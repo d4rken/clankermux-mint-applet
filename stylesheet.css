@@ -1,0 +1,190 @@
+.clankermux-info {
+    min-width: 560px;
+    spacing: 2px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+}
+
+.clankermux-info-title {
+    font-weight: bold;
+    font-size: 1.05em;
+}
+
+.clankermux-info-subtitle,
+.clankermux-no-usage {
+    color: #a8a8a8;
+    font-size: 0.9em;
+}
+
+.clankermux-info.error .clankermux-info-title,
+.clankermux-info.error .clankermux-info-subtitle {
+    color: #ef7777;
+}
+
+.clankermux-account {
+    min-width: 560px;
+    spacing: 4px;
+    padding-top: 3px;
+    padding-bottom: 5px;
+}
+
+.clankermux-account-heading {
+    spacing: 8px;
+}
+
+.clankermux-account-name {
+    font-weight: bold;
+}
+
+.clankermux-provider,
+.clankermux-state,
+.clankermux-reset {
+    color: #a8a8a8;
+    font-size: 0.85em;
+}
+
+.clankermux-primary-badge {
+    color: #8bd49c;
+    font-size: 0.7em;
+    font-weight: bold;
+    border: 1px solid rgba(139, 212, 156, 0.55);
+    border-radius: 3px;
+    padding: 1px 4px;
+}
+
+.clankermux-state.available {
+    color: #8bd49c;
+}
+
+.clankermux-state.limited,
+.clankermux-state.paused {
+    color: #f0c674;
+}
+
+.clankermux-state.error {
+    color: #ef7777;
+}
+
+.clankermux-usage-row {
+    spacing: 8px;
+}
+
+.clankermux-pools {
+    min-width: 560px;
+    spacing: 5px;
+    padding-top: 2px;
+    padding-bottom: 5px;
+}
+
+.clankermux-pool-row {
+    spacing: 8px;
+}
+
+.clankermux-pool-label {
+    width: 66px;
+    font-weight: bold;
+}
+
+.clankermux-limit-label {
+    width: 66px;
+    font-size: 0.9em;
+}
+
+.clankermux-limit-label.scoped {
+    color: #b8b8b8;
+    font-style: italic;
+}
+
+.clankermux-progress-track {
+    height: 7px;
+    background-color: rgba(128, 128, 128, 0.28);
+    border-radius: 4px;
+}
+
+.clankermux-progress-fill {
+    background-color: #68b77a;
+    border-radius: 4px;
+}
+
+.clankermux-progress-fill.warning {
+    background-color: #e5b95c;
+}
+
+.clankermux-progress-fill.critical {
+    background-color: #df6868;
+}
+
+.clankermux-percent {
+    width: 34px;
+    font-size: 0.9em;
+    text-align: right;
+}
+
+.clankermux-forecast {
+    width: 48px;
+    color: #8bd49c;
+    font-size: 0.85em;
+}
+
+.clankermux-forecast.warning {
+    color: #e5b95c;
+}
+
+.clankermux-forecast.critical {
+    color: #df6868;
+}
+
+.clankermux-reset {
+    width: 75px;
+}
+
+.clankermux-reset.pooled {
+    width: 130px;
+}
+
+.clankermux-panel-content {
+    spacing: 10px;
+}
+
+.clankermux-panel-accounts {
+    font-weight: bold;
+    color: #8bd49c;
+}
+
+.clankermux-panel-accounts.warning,
+.clankermux-panel-error {
+    color: #e5b95c;
+}
+
+.clankermux-panel-loading {
+    color: #a8a8a8;
+}
+
+.clankermux-panel-meter {
+    spacing: 4px;
+}
+
+.clankermux-panel-meter-label {
+    font-size: 0.88em;
+    font-weight: bold;
+}
+
+.clankermux-panel-progress-track {
+    height: 8px;
+    background-color: rgba(128, 128, 128, 0.35);
+    border-radius: 4px;
+}
+
+.clankermux-panel-percent {
+    width: 29px;
+    font-size: 0.82em;
+    color: #8bd49c;
+}
+
+.clankermux-panel-percent.warning {
+    color: #e5b95c;
+}
+
+.clankermux-panel-percent.critical {
+    color: #df6868;
+}

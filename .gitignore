@@ -1,0 +1,5 @@
+.agents/
+.codex/
+node_modules/
+npm-debug.log*
+.DS_Store
