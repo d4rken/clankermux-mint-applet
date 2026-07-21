@@ -27,6 +27,30 @@ var UsageModel = (() => {
         return url.replace(/\/+$/, '');
     }
 
+    function createRefreshCycle(requestCount = 1) {
+        const parsedCount = Math.trunc(Number(requestCount));
+        let remaining = Number.isFinite(parsedCount) && parsedCount > 0 ? parsedCount : 1;
+        let settled = false;
+
+        return {
+            completeOne() {
+                if (settled)
+                    return false;
+                remaining--;
+                if (remaining > 0)
+                    return false;
+                settled = true;
+                return true;
+            },
+            expire() {
+                if (settled)
+                    return false;
+                settled = true;
+                return true;
+            },
+        };
+    }
+
     function _usageData(account) {
         return account?.usageData || account?.staleUsage || {};
     }
@@ -345,6 +369,7 @@ var UsageModel = (() => {
         aggregateUsagePools,
         buildView,
         clampPercent,
+        createRefreshCycle,
         formatDuration,
         formatReset,
         humanizeStatus,

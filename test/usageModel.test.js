@@ -12,6 +12,22 @@ test('normalizes configured server URLs', () => {
     assert.equal(model.normalizeBaseUrl(''), '');
 });
 
+test('refresh cycles settle once after every request completes', () => {
+    const cycle = model.createRefreshCycle(2);
+    assert.equal(cycle.completeOne(), false);
+    assert.equal(cycle.completeOne(), true);
+    assert.equal(cycle.completeOne(), false);
+    assert.equal(cycle.expire(), false);
+});
+
+test('expired refresh cycles ignore late request completions', () => {
+    const cycle = model.createRefreshCycle(2);
+    assert.equal(cycle.completeOne(), false);
+    assert.equal(cycle.expire(), true);
+    assert.equal(cycle.expire(), false);
+    assert.equal(cycle.completeOne(), false);
+});
+
 test('does not turn missing utilization into zero usage', () => {
     assert.equal(model.clampPercent(null), null);
     assert.equal(model.clampPercent(undefined), null);

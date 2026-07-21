@@ -186,6 +186,8 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._model = model;
         this._destroyed = false;
         this._pollId = 0;
+        this._refreshWatchdogId = 0;
+        this._refreshCancellable = null;
         this._requestGeneration = 0;
         this._refreshing = false;
         this._accounts = null;
@@ -231,6 +233,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
         if (!this.settings)
             return;
         this._requestGeneration++;
+        this._cancelActiveRefresh();
         this._refreshing = false;
         this._createSession();
         this._refresh();
@@ -254,7 +257,18 @@ class ClankermuxUsageApplet extends Applet.Applet {
         });
     }
 
-    _getJson(path, generation, callback) {
+    _cancelActiveRefresh() {
+        if (this._refreshWatchdogId) {
+            Mainloop.source_remove(this._refreshWatchdogId);
+            this._refreshWatchdogId = 0;
+        }
+        if (this._refreshCancellable) {
+            this._refreshCancellable.cancel();
+            this._refreshCancellable = null;
+        }
+    }
+
+    _getJson(path, generation, cancellable, callback) {
         const baseUrl = this._model.normalizeBaseUrl(this.apiUrl);
         if (!baseUrl) {
             callback(new Error('Server URL is empty'), null, 0);
@@ -272,23 +286,33 @@ class ClankermuxUsageApplet extends Applet.Applet {
             return;
         }
 
-        this._session.send_and_read_async(message, Soup.MessagePriority.NORMAL, null, (session, result) => {
-            if (this._destroyed || generation !== this._requestGeneration)
-                return;
-            let data = null;
-            let error = null;
-            const status = message.get_status();
-            try {
-                const bytes = session.send_and_read_finish(result);
-                const body = ByteArray.toString(bytes.get_data());
-                data = JSON.parse(body);
-                if (status < 200 || status >= 300)
-                    error = new Error(`HTTP ${status}: ${message.get_reason_phrase()}`);
-            } catch (caught) {
-                error = caught;
-            }
-            callback(error, data, status);
-        });
+        try {
+            this._session.send_and_read_async(
+                message,
+                Soup.MessagePriority.NORMAL,
+                cancellable,
+                (session, result) => {
+                    if (this._destroyed || generation !== this._requestGeneration)
+                        return;
+                    let data = null;
+                    let error = null;
+                    let status = 0;
+                    try {
+                        status = message.get_status();
+                        const bytes = session.send_and_read_finish(result);
+                        const body = ByteArray.toString(bytes.get_data());
+                        data = JSON.parse(body);
+                        if (status < 200 || status >= 300)
+                            error = new Error(`HTTP ${status}: ${message.get_reason_phrase()}`);
+                    } catch (caught) {
+                        error = caught;
+                    }
+                    callback(error, data, status);
+                }
+            );
+        } catch (error) {
+            callback(error, null, 0);
+        }
     }
 
     _refresh() {
@@ -296,16 +320,23 @@ class ClankermuxUsageApplet extends Applet.Applet {
             return;
         this._refreshing = true;
         const generation = ++this._requestGeneration;
-        let remaining = 2;
+        const cycle = this._model.createRefreshCycle(2);
+        const timeoutSeconds = Math.max(2, Number(this.requestTimeout || 8));
+        const cancellable = new Gio.Cancellable();
+        this._refreshCancellable = cancellable;
         let accountsResult = null;
         let healthResult = null;
         let accountsError = null;
         let healthError = null;
 
         const complete = () => {
-            remaining--;
-            if (remaining > 0 || this._destroyed || generation !== this._requestGeneration)
+            if (!cycle.completeOne() || this._destroyed || generation !== this._requestGeneration)
                 return;
+            if (this._refreshWatchdogId) {
+                Mainloop.source_remove(this._refreshWatchdogId);
+                this._refreshWatchdogId = 0;
+            }
+            this._refreshCancellable = null;
             this._refreshing = false;
 
             if (Array.isArray(accountsResult)) {
@@ -322,12 +353,27 @@ class ClankermuxUsageApplet extends Applet.Applet {
             this._render();
         };
 
-        this._getJson('/api/accounts', generation, (error, data) => {
+        this._refreshWatchdogId = Mainloop.timeout_add_seconds(timeoutSeconds, () => {
+            this._refreshWatchdogId = 0;
+            if (this._destroyed || generation !== this._requestGeneration || !cycle.expire())
+                return false;
+
+            this._requestGeneration++;
+            this._refreshing = false;
+            this._refreshCancellable = null;
+            cancellable.cancel();
+            this._lastError = `Refresh timed out after ${timeoutSeconds}s`;
+            this._createSession();
+            this._render();
+            return false;
+        });
+
+        this._getJson('/api/accounts', generation, cancellable, (error, data) => {
             accountsError = error;
             accountsResult = data;
             complete();
         });
-        this._getJson('/health?detail=1', generation, (error, data) => {
+        this._getJson('/health?detail=1', generation, cancellable, (error, data) => {
             healthError = error;
             healthResult = data;
             complete();
@@ -454,6 +500,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
     on_applet_removed_from_panel() {
         this._destroyed = true;
         this._requestGeneration++;
+        this._cancelActiveRefresh();
         if (this._pollId) {
             Mainloop.source_remove(this._pollId);
             this._pollId = 0;
