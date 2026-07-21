@@ -181,8 +181,71 @@ test('account state gives paused, token, and rate limits priority', () => {
     assert.equal(model.accountState({}, { status: 'available' }, NOW).key, 'available');
 });
 
+test('recognizes Clankermux epoch-millisecond provider overloads', () => {
+    const overloadedUntil = NOW + 60_000;
+    const state = model.accountState({ providerOverloadedUntil: overloadedUntil }, null, NOW);
+
+    assert.deepEqual(state, {
+        key: 'overloaded',
+        label: 'Provider overloaded',
+        until: overloadedUntil,
+    });
+    assert.equal(model.accountState({ providerOverloadedUntil: NOW - 1 }, null, NOW).key, 'available');
+});
+
+test('groups provider overloads and corrects the effective routable count', () => {
+    const overloadedUntil = NOW + 60_000;
+    const accounts = ['Main', 'Backup'].map(name => ({
+        name,
+        provider: 'anthropic',
+        providerOverloadKey: 'anthropic-upstream',
+        providerOverloadedUntil: overloadedUntil,
+    }));
+    const health = {
+        status: 'ok',
+        pool: { configured: 2, routable: 2 },
+        accounts_detail: accounts.map(account => ({ name: account.name, status: 'available' })),
+    };
+
+    const view = model.buildView(accounts, health, {}, NOW);
+    assert.equal(view.pool.routable, 0);
+    assert.deepEqual(view.providerOverloads, [{
+        key: 'anthropic-upstream',
+        provider: 'Anthropic',
+        until: overloadedUntil,
+        accountCount: 2,
+    }]);
+    assert.ok(view.accounts.every(account => account.state.key === 'overloaded'));
+});
+
+test('keeps fallback-provider accounts available during an overload', () => {
+    const overloadedUntil = NOW + 60_000;
+    const accounts = [
+        ...['Claude A', 'Claude B'].map(name => ({
+            name,
+            provider: 'anthropic',
+            providerOverloadKey: 'anthropic-upstream',
+            providerOverloadedUntil: overloadedUntil,
+        })),
+        ...['Codex A', 'Codex B'].map(name => ({ name, provider: 'codex' })),
+    ];
+    const health = {
+        status: 'ok',
+        pool: { configured: 4, routable: 4 },
+        accounts_detail: accounts.map(account => ({ name: account.name, status: 'available' })),
+    };
+
+    const view = model.buildView(accounts, health, {}, NOW);
+    assert.equal(view.pool.routable, 2);
+    assert.deepEqual(
+        view.accounts.filter(account => account.state.key === 'available').map(account => account.provider),
+        ['Codex', 'Codex']
+    );
+});
+
 test('formats reset times compactly', () => {
     assert.equal(model.formatReset('2026-07-20T12:45:00Z', NOW), 'in 45m');
+    assert.equal(model.formatReset(NOW + 45 * 60_000, NOW), 'in 45m');
     assert.equal(model.formatReset('2026-07-21T14:00:00Z', NOW), 'in 1d 2h');
     assert.equal(model.formatReset('2026-07-20T11:59:00Z', NOW), 'reset due');
     assert.equal(model.formatReset(null, NOW), '');

@@ -24,8 +24,14 @@ combined runway still available. Click the applet for:
 - 5-hour and 7-day usage bars for every account
 - model-specific weekly limits such as Fable
 - reset countdowns
-- current load-balancer account, paused/token/rate-limit state, and stale-data state
+- current load-balancer account, paused/token/rate-limit state, provider overloads, and stale-data state
 - manual refresh and a shortcut to the Clankermux dashboard
+
+When Clankermux observes an upstream provider overload, the availability count
+gains an hourglass, for example `0/4 ⏳`. The popup reports the affected provider,
+account count, and cooldown, and each affected account shows its retry countdown.
+This is based on Clankermux's live 529 cooldown signal, not the provider's broader
+public incident status page.
 
 Bar colors are based on projected *combined* pool usage at each account's
 reset, using Clankermux predictions where available and reset-paced estimates

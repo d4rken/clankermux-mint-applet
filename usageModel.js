@@ -18,6 +18,22 @@ var UsageModel = (() => {
         return number === null ? null : Math.round(number);
     }
 
+    function timestampMs(value) {
+        if (value === null || value === undefined || value === '')
+            return null;
+        if (typeof value === 'number')
+            return Number.isFinite(value) ? value : null;
+
+        const text = String(value).trim();
+        if (!text)
+            return null;
+        const numeric = Number(text);
+        if (Number.isFinite(numeric))
+            return numeric;
+        const parsed = Date.parse(text);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
     function normalizeBaseUrl(value) {
         let url = String(value || '').trim();
         if (!url)
@@ -175,15 +191,15 @@ var UsageModel = (() => {
             return { key: 'error', label: `Token ${tokenStatus}` };
 
         const untilFields = [
-            ['rateLimitedUntil', 'Rate limited'],
-            ['usageThrottledUntil', 'Usage throttled'],
-            ['providerOverloadedUntil', 'Provider overloaded'],
-            ['providerOverloadeduntil', 'Provider overloaded'],
+            ['rateLimitedUntil', 'Rate limited', 'limited'],
+            ['usageThrottledUntil', 'Usage throttled', 'limited'],
+            ['providerOverloadedUntil', 'Provider overloaded', 'overloaded'],
+            ['providerOverloadeduntil', 'Provider overloaded', 'overloaded'],
         ];
-        for (const [field, label] of untilFields) {
-            const until = Date.parse(account?.[field] || '');
+        for (const [field, label, key] of untilFields) {
+            const until = timestampMs(account?.[field]);
             if (Number.isFinite(until) && until > nowMs)
-                return { key: 'limited', label, until };
+                return { key, label, until };
         }
 
         const healthStatus = String(healthDetail?.status || '').toLowerCase();
@@ -207,6 +223,38 @@ var UsageModel = (() => {
         for (const detail of health?.accounts_detail || [])
             result.set(detail.name, detail);
         return result;
+    }
+
+    function providerOverloads(accounts, nowMs = Date.now()) {
+        const grouped = new Map();
+        for (const account of accounts || []) {
+            const until = timestampMs(
+                account?.providerOverloadedUntil ?? account?.providerOverloadeduntil
+            );
+            if (!Number.isFinite(until) || until <= nowMs)
+                continue;
+
+            const key = String(account?.providerOverloadKey || account?.provider || 'provider');
+            const existing = grouped.get(key);
+            if (existing) {
+                existing.accountCount++;
+                existing.until = Math.max(existing.until, until);
+                continue;
+            }
+
+            const provider = key === 'anthropic-upstream'
+                ? 'Anthropic'
+                : humanizeStatus(account?.provider || key);
+            grouped.set(key, {
+                key,
+                provider,
+                until,
+                accountCount: 1,
+            });
+        }
+        return Array.from(grouped.values()).sort((left, right) => {
+            return left.provider.localeCompare(right.provider);
+        });
     }
 
     function _poolLabel(key, items) {
@@ -320,13 +368,21 @@ var UsageModel = (() => {
             ? Number(health.pool.configured)
             : mapped.length;
         const derivedRoutable = mapped.filter(account => account.state.key === 'available').length;
-        const routable = Number.isFinite(Number(health?.pool?.routable))
+        const reportedRoutable = Number.isFinite(Number(health?.pool?.routable))
             ? Number(health.pool.routable)
             : derivedRoutable;
+        const overloads = providerOverloads(list, nowMs);
+        // /health does not include Clankermux's in-memory provider-overload gate,
+        // while accountState does. Use the stricter count so the panel does not
+        // claim every account is routable during a provider-wide 529 cooldown.
+        const routable = overloads.length
+            ? Math.min(reportedRoutable, derivedRoutable)
+            : reportedRoutable;
         const usagePools = aggregateUsagePools(mapped, warningThreshold, nowMs);
         return {
             accounts: mapped,
             usagePools,
+            providerOverloads: overloads,
             pool: {
                 configured,
                 routable,
@@ -335,7 +391,7 @@ var UsageModel = (() => {
                 usageExhausted: Number(health?.pool?.usage_exhausted || 0),
                 nextAvailableAt: health?.pool?.next_available_at || null,
             },
-            healthy: health?.status ? health.status === 'ok' : routable > 0,
+            healthy: (health?.status ? health.status === 'ok' : routable > 0) && !overloads.length,
         };
     }
 
@@ -355,7 +411,7 @@ var UsageModel = (() => {
     }
 
     function formatReset(value, nowMs = Date.now()) {
-        const timestamp = Date.parse(value || '');
+        const timestamp = timestampMs(value);
         if (!Number.isFinite(timestamp))
             return '';
         if (timestamp <= nowMs)
@@ -374,6 +430,8 @@ var UsageModel = (() => {
         formatReset,
         humanizeStatus,
         normalizeBaseUrl,
+        providerOverloads,
+        timestampMs,
     };
 })();
 

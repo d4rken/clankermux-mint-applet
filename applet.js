@@ -160,9 +160,13 @@ class AccountMenuItem extends PopupMenu.PopupBaseMenuItem {
         }));
         outer.add_child(heading);
 
-        const stateText = account.stale ? `${account.state.label} · cached usage` : account.state.label;
+        const stateParts = [account.state.label];
+        if (account.state.until)
+            stateParts.push(`retry ${model.formatReset(account.state.until)}`);
+        if (account.stale)
+            stateParts.push('cached usage');
         outer.add_child(new St.Label({
-            text: stateText,
+            text: stateParts.join(' · '),
             style_class: `clankermux-state ${account.state.key}`,
         }));
 
@@ -410,8 +414,9 @@ class ClankermuxUsageApplet extends Applet.Applet {
             return;
         }
 
+        const overloadMarker = this._view.providerOverloads.length ? ' ⏳' : '';
         this._panelContent.add_child(new St.Label({
-            text: `${this._view.pool.routable}/${this._view.pool.configured}`,
+            text: `${this._view.pool.routable}/${this._view.pool.configured}${overloadMarker}`,
             style_class: this._view.pool.routable === this._view.pool.configured
                 ? 'clankermux-panel-accounts'
                 : 'clankermux-panel-accounts warning',
@@ -426,6 +431,11 @@ class ClankermuxUsageApplet extends Applet.Applet {
         const lines = [
             `Clankermux: ${this._view.pool.routable} of ${this._view.pool.configured} accounts available`,
         ];
+        for (const overload of this._view.providerOverloads) {
+            lines.push(
+                `${overload.provider} provider overloaded · ${overload.accountCount} account${overload.accountCount === 1 ? '' : 's'} affected · retry ${this._model.formatReset(overload.until)}`
+            );
+        }
         for (const pool of this._view.usagePools) {
             const forecast = pool.forecastCount ? `projected ${pool.projectedPercent}% at reset` : 'forecast unavailable';
             lines.push(`${pool.label}: ${pool.usedPercent}% used · ${pool.remainingPercent}% left across ${pool.accountCount} · ${forecast}`);
@@ -453,6 +463,14 @@ class ClankermuxUsageApplet extends Applet.Applet {
         if (this._lastError)
             subtitle += ' · showing cached data';
         this.menu.addMenuItem(new InfoMenuItem('Clankermux usage', subtitle));
+        for (const overload of this._view.providerOverloads) {
+            const affected = `${overload.accountCount} account${overload.accountCount === 1 ? '' : 's'} affected`;
+            this.menu.addMenuItem(new InfoMenuItem(
+                `${overload.provider} provider overloaded`,
+                `${affected} · retry ${this._model.formatReset(overload.until)}`,
+                'overload'
+            ));
+        }
         if (this._view.usagePools.length)
             this.menu.addMenuItem(new PoolSummaryMenuItem(this._view.usagePools, this._model));
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());

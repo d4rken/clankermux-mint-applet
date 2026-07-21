@@ -17,7 +17,9 @@
 }
 
 .clankermux-info.error .clankermux-info-title,
-.clankermux-info.error .clankermux-info-subtitle {
+.clankermux-info.error .clankermux-info-subtitle,
+.clankermux-info.overload .clankermux-info-title,
+.clankermux-info.overload .clankermux-info-subtitle {
     color: #ef7777;
 }
 
@@ -61,6 +63,7 @@
     color: #f0c674;
 }
 
+.clankermux-state.overloaded,
 .clankermux-state.error {
     color: #ef7777;
 }
