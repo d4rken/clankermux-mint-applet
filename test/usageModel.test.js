@@ -173,6 +173,17 @@ test('scoped limits such as Fable form their own pool', () => {
     assert.equal(pool.severity, 'warning');
 });
 
+test('hides unused scoped families from panel pools', () => {
+    const pools = [
+        { key: 'five_hour', label: '5h', scoped: false, usedPercent: 0 },
+        { key: 'scope:spark', label: 'Codex Spark', scoped: true, usedPercent: 0 },
+        { key: 'scope:fable', label: 'Fable', scoped: true, usedPercent: 1 },
+    ];
+
+    assert.deepEqual(model.panelUsagePools(pools).map(pool => pool.label), ['5h', 'Fable']);
+    assert.equal(pools.length, 3);
+});
+
 test('account state gives paused, token, and rate limits priority', () => {
     assert.equal(model.accountState({ paused: true, pauseReason: 'Manual' }, null, NOW).key, 'paused');
     assert.equal(model.accountState({ tokenStatus: 'expired' }, null, NOW).key, 'error');
@@ -249,4 +260,11 @@ test('formats reset times compactly', () => {
     assert.equal(model.formatReset('2026-07-21T14:00:00Z', NOW), 'in 1d 2h');
     assert.equal(model.formatReset('2026-07-20T11:59:00Z', NOW), 'reset due');
     assert.equal(model.formatReset(null, NOW), '');
+});
+
+test('formats refresh timestamps in local time', () => {
+    const localTime = new Date(2026, 6, 20, 14, 5, 9).getTime();
+    assert.equal(model.formatTimestamp(localTime), '2026-07-20 14:05:09');
+    assert.equal(model.formatTimestamp('not-a-date'), '');
+    assert.equal(model.formatTimestamp(null), '');
 });

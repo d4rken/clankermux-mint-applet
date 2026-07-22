@@ -1,6 +1,6 @@
 {
   "name": "clankermux-usage-cinnamon-applet",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "description": "Cinnamon panel applet for Clankermux account usage",
   "license": "GPL-3.0-only",

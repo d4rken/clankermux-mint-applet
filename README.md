@@ -17,6 +17,10 @@ bars for the 5-hour, 7-day, and model-specific quota pools. For example:
 4/4  5h [  5%]  7d [ 49%]  Fable [ 67%]
 ```
 
+Unused model-specific quota families are omitted from the panel to conserve
+space, but remain available in the clicked details. Core 5-hour and 7-day
+meters remain visible at 0%.
+
 Each percentage is the equal-capacity average across the accounts that expose
 that quota: `sum(account usage %) / account count`. The unfilled portion is the
 combined runway still available. Click the applet for:
@@ -25,6 +29,7 @@ combined runway still available. Click the applet for:
 - model-specific weekly limits such as Fable
 - reset countdowns
 - current load-balancer account, paused/token/rate-limit state, provider overloads, and stale-data state
+- the last successful refresh time, so stale widget data is easy to spot
 - manual refresh and a shortcut to the Clankermux dashboard
 
 When Clankermux observes an upstream provider overload, the availability count

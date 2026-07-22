@@ -423,9 +423,10 @@ class ClankermuxUsageApplet extends Applet.Applet {
             y_align: Clutter.ActorAlign.CENTER,
         }));
         const barWidth = Math.max(30, Number(this.panelBarWidth || 52));
-        for (const pool of this._view.usagePools)
+        const panelPools = this._model.panelUsagePools(this._view.usagePools);
+        for (const pool of panelPools)
             this._panelContent.add_child(createPanelMeter(pool, barWidth, this.showPanelPercentages !== false));
-        if (!this._view.usagePools.length)
+        if (!panelPools.length)
             this._panelContent.add_child(new St.Label({ text: 'quota –', style_class: 'clankermux-panel-loading' }));
 
         const lines = [
@@ -450,9 +451,13 @@ class ClankermuxUsageApplet extends Applet.Applet {
     _renderMenu() {
         this.menu.removeAll();
         if (!this._accounts) {
+            const details = [
+                this._lastError || this._model.normalizeBaseUrl(this.apiUrl),
+                this._lastRefreshText(),
+            ].filter(Boolean).join('\n');
             this.menu.addMenuItem(new InfoMenuItem(
                 this._lastError ? 'Clankermux is unavailable' : 'Loading usage…',
-                this._lastError || this._model.normalizeBaseUrl(this.apiUrl),
+                details,
                 this._lastError ? 'error' : ''
             ));
             this._addMenuActions();
@@ -462,6 +467,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
         let subtitle = `${this._view.pool.routable} of ${this._view.pool.configured} accounts available`;
         if (this._lastError)
             subtitle += ' · showing cached data';
+        subtitle += `\n${this._lastRefreshText()}`;
         this.menu.addMenuItem(new InfoMenuItem('Clankermux usage', subtitle));
         for (const overload of this._view.providerOverloads) {
             const affected = `${overload.accountCount} account${overload.accountCount === 1 ? '' : 's'} affected`;
@@ -483,6 +489,14 @@ class ClankermuxUsageApplet extends Applet.Applet {
         if (this._lastError)
             this.menu.addMenuItem(new InfoMenuItem('Refresh failed', this._lastError, 'error'));
         this._addMenuActions();
+    }
+
+    _lastRefreshText() {
+        if (!this._lastSuccess)
+            return 'Last refreshed: Never';
+        const timestamp = this._model.formatTimestamp(this._lastSuccess);
+        const age = this._model.formatDuration(Date.now() - this._lastSuccess);
+        return `Last refreshed: ${timestamp} (${age} ago)`;
     }
 
     _addMenuActions() {

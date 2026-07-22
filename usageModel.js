@@ -330,6 +330,10 @@ var UsageModel = (() => {
         return pools;
     }
 
+    function panelUsagePools(pools) {
+        return (pools || []).filter(pool => !pool.scoped || pool.usedPercent > 0);
+    }
+
     function buildView(accounts, health, options = {}, nowMs = Date.now()) {
         const list = Array.isArray(accounts) ? accounts : [];
         const details = _healthByName(health);
@@ -410,6 +414,17 @@ var UsageModel = (() => {
         return remainingHours ? `${days}d ${remainingHours}h` : `${days}d`;
     }
 
+    function formatTimestamp(value) {
+        const timestamp = timestampMs(value);
+        if (!Number.isFinite(timestamp))
+            return '';
+
+        const date = new Date(timestamp);
+        const pad = number => String(number).padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+            `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+
     function formatReset(value, nowMs = Date.now()) {
         const timestamp = timestampMs(value);
         if (!Number.isFinite(timestamp))
@@ -428,8 +443,10 @@ var UsageModel = (() => {
         createRefreshCycle,
         formatDuration,
         formatReset,
+        formatTimestamp,
         humanizeStatus,
         normalizeBaseUrl,
+        panelUsagePools,
         providerOverloads,
         timestampMs,
     };
