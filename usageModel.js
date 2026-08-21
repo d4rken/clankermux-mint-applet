@@ -115,8 +115,9 @@ var UsageModel = (() => {
 
     function _decorateWindow(window, account, nowMs, warningThreshold) {
         const direct = _directPrediction(account, window.key);
-        if (!window.resetsAt && Number.isFinite(Number(direct?.resetsAtMs)))
-            window.resetsAt = new Date(Number(direct.resetsAtMs)).toISOString();
+        const directResetMs = timestampMs(direct?.resetsAtMs);
+        if (!window.resetsAt && directResetMs !== null)
+            window.resetsAt = new Date(directResetMs).toISOString();
 
         const directProjection = clampNumber(direct?.predictedAtReset);
         if (directProjection !== null) {

@@ -1,6 +1,6 @@
 UUID := clankermux-usage@d4rken
 APPLET_DIR := $(HOME)/.local/share/cinnamon/applets/$(UUID)
-FILES := applet.js metadata.json settings-schema.json stylesheet.css usageModel.js
+FILES := applet.js metadata.json settings-schema.json stylesheet.css usageModel.js pollingController.js
 
 .PHONY: check test install
 

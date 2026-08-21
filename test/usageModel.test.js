@@ -71,6 +71,39 @@ test('uses stale usage when the live poll has not produced data', () => {
     assert.equal(windows[0].stale, true);
 });
 
+test('keeps missing reset timestamps null instead of converting them to Unix epoch', () => {
+    const windows = model.accountWindows({
+        usageData: {
+            five_hour: { utilization: 0, resets_at: null },
+        },
+        prediction: {
+            fiveHour: {
+                predictedAtReset: null,
+                resetsAtMs: null,
+                state: 'stable',
+            },
+        },
+    }, true, NOW);
+
+    assert.equal(windows.length, 1);
+    assert.equal(windows[0].resetsAt, null);
+    assert.equal(model.formatReset(windows[0].resetsAt, NOW), '');
+});
+
+test('uses a valid prediction reset timestamp when live usage omits it', () => {
+    const resetMs = NOW + 60 * 60_000;
+    const windows = model.accountWindows({
+        usageData: {
+            five_hour: { utilization: 10, resets_at: null },
+        },
+        prediction: {
+            fiveHour: { predictedAtReset: 20, resetsAtMs: resetMs },
+        },
+    }, true, NOW);
+
+    assert.equal(windows[0].resetsAt, new Date(resetMs).toISOString());
+});
+
 test('builds pool summary from health and prioritizes the primary account', () => {
     const accounts = [
         {
