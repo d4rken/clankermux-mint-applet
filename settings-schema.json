@@ -25,23 +25,23 @@
     "panel-section": {
       "type": "section",
       "title": "Panel",
-      "keys": ["panel-bar-width", "show-panel-percentages", "warning-threshold"]
+      "keys": ["panel-bar-width", "show-panel-percentages", "runway-warning-hours"]
     },
     "details-section": {
       "type": "section",
       "title": "Popup",
-      "keys": ["show-scoped-limits", "primary-first"]
+      "keys": ["show-scoped-limits", "default-candidate-first"]
     }
   },
   "api-url": {
     "type": "entry",
     "default": "http://127.0.0.1:8080",
     "description": "Server URL (hostname or IP address)",
-    "tooltip": "Base URL of the Clankermux management API, for example http://127.0.0.1:8080 or http://clankermux.example.test:8080"
+    "tooltip": "Base URL of Clankermux's public widget API, for example http://127.0.0.1:8080 or http://clankermux.example.test:8080"
   },
   "connection-note": {
     "type": "label",
-    "description": "The applet reads /health?detail=1 and /api/accounts. Enter a complete HTTP or HTTPS URL above; hostnames and IP addresses are both supported. Clankermux management endpoints do not require an API key, so prefer localhost, a trusted LAN, or an SSH tunnel."
+    "description": "The applet reads Clankermux's unauthenticated, read-only /public/v1 status, accounts, and runway endpoints. Enter a complete HTTP or HTTPS URL above; hostnames and IP addresses are both supported."
   },
   "refresh-interval": {
     "type": "spinbutton",
@@ -75,24 +75,25 @@
     "default": true,
     "description": "Show percentages beside panel bars"
   },
-  "warning-threshold": {
+  "runway-warning-hours": {
     "type": "spinbutton",
-    "default": 80,
-    "min": 50,
-    "max": 99,
+    "default": 72,
+    "min": 1,
+    "max": 336,
     "step": 1,
-    "units": "%",
-    "description": "Turn pooled bars orange at this projected usage",
-    "tooltip": "A single account at risk does not change a pooled bar. Red is reserved for confident exhaustion of the whole pool."
+    "units": "hours",
+    "description": "Warn when quota runway falls below",
+    "tooltip": "The panel runway turns orange below this duration. It turns red when the pool is out of quota."
   },
   "show-scoped-limits": {
     "type": "switch",
     "default": true,
     "description": "Show model-specific limits in the panel and popup"
   },
-  "primary-first": {
+  "default-candidate-first": {
     "type": "switch",
     "default": true,
-    "description": "Put the currently selected account first"
+    "description": "Put the default routing candidate first",
+    "tooltip": "This is the account selected for a fresh, unpinned, nominal-sized request; pinned and affinity-routed requests may choose differently."
   }
 }

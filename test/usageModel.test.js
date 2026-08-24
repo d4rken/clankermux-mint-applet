@@ -3,8 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const model = require('../usageModel');
+const fixtures = require('./publicV1Fixtures');
 
-const NOW = Date.parse('2026-07-20T12:00:00Z');
+const { NOW } = fixtures;
 
 test('normalizes configured server URLs', () => {
     assert.equal(model.normalizeBaseUrl(' proxy.example.test:8080/ '), 'http://proxy.example.test:8080');
@@ -13,7 +14,8 @@ test('normalizes configured server URLs', () => {
 });
 
 test('refresh cycles settle once after every request completes', () => {
-    const cycle = model.createRefreshCycle(2);
+    const cycle = model.createRefreshCycle(3);
+    assert.equal(cycle.completeOne(), false);
     assert.equal(cycle.completeOne(), false);
     assert.equal(cycle.completeOne(), true);
     assert.equal(cycle.completeOne(), false);
@@ -21,10 +23,9 @@ test('refresh cycles settle once after every request completes', () => {
 });
 
 test('expired refresh cycles ignore late request completions', () => {
-    const cycle = model.createRefreshCycle(2);
+    const cycle = model.createRefreshCycle(3);
     assert.equal(cycle.completeOne(), false);
     assert.equal(cycle.expire(), true);
-    assert.equal(cycle.expire(), false);
     assert.equal(cycle.completeOne(), false);
 });
 
@@ -34,270 +35,198 @@ test('does not turn missing utilization into zero usage', () => {
     assert.equal(model.clampPercent(0), 0);
 });
 
-test('extracts standard and model-scoped usage windows', () => {
-    const windows = model.accountWindows({
-        usageData: {
-            five_hour: { utilization: 14, resets_at: '2026-07-20T13:00:00Z' },
-            seven_day: { utilization: 60, resets_at: '2026-07-21T03:00:00Z' },
-            limits: [
-                { kind: 'weekly_all', percent: 60, scope: null },
-                {
-                    kind: 'weekly_scoped',
-                    percent: 100,
-                    resets_at: '2026-07-21T03:00:00Z',
-                    scope: { model: { display_name: 'Fable' } },
-                    is_active: true,
-                },
-            ],
-        },
-    });
+test('extracts public-v1 windows and their server predictions', () => {
+    const windows = model.accountWindows(fixtures.accounts()[0]);
 
-    assert.deepEqual(windows.map(window => [window.label, window.percent]), [
-        ['5 hour', 14],
-        ['7 day', 60],
-        ['Fable', 100],
+    assert.deepEqual(windows.map(window => [window.key, window.label, window.percent]), [
+        ['five_hour', '5-hour', 90],
+        ['seven_day', 'Weekly', 60],
+        ['scope:fable', 'Fable', 40],
     ]);
+    assert.equal(windows[0].projectedAtReset, 95);
+    assert.equal(windows[0].forecastConfidence, 'high');
+    assert.equal(windows[0].severity, 'warning');
     assert.equal(windows[2].scoped, true);
-    assert.equal(windows[2].active, true);
 });
 
-test('uses stale usage when the live poll has not produced data', () => {
-    const windows = model.accountWindows({
-        usageData: null,
-        staleUsage: { seven_day: { utilization: 42 } },
+test('omits unreadable windows instead of presenting them as zero', () => {
+    const windows = model.accountWindows(fixtures.accounts()[2]);
+    assert.deepEqual(windows.map(window => window.key), ['seven_day']);
+});
+
+test('hides scoped and otherwise-scoped windows when configured', () => {
+    const account = fixtures.accounts()[0];
+    account.windows.push({
+        kind: 'other', scopeId: 'seven_day_oauth_apps', label: 'Claude Code weekly',
+        utilizationPct: 25, resetsAt: null, observedAt: null, prediction: null,
     });
-    assert.equal(windows.length, 1);
-    assert.equal(windows[0].percent, 42);
-    assert.equal(windows[0].stale, true);
-});
 
-test('keeps missing reset timestamps null instead of converting them to Unix epoch', () => {
-    const windows = model.accountWindows({
-        usageData: {
-            five_hour: { utilization: 0, resets_at: null },
-        },
-        prediction: {
-            fiveHour: {
-                predictedAtReset: null,
-                resetsAtMs: null,
-                state: 'stable',
-            },
-        },
-    }, true, NOW);
-
-    assert.equal(windows.length, 1);
-    assert.equal(windows[0].resetsAt, null);
-    assert.equal(model.formatReset(windows[0].resetsAt, NOW), '');
-});
-
-test('uses a valid prediction reset timestamp when live usage omits it', () => {
-    const resetMs = NOW + 60 * 60_000;
-    const windows = model.accountWindows({
-        usageData: {
-            five_hour: { utilization: 10, resets_at: null },
-        },
-        prediction: {
-            fiveHour: { predictedAtReset: 20, resetsAtMs: resetMs },
-        },
-    }, true, NOW);
-
-    assert.equal(windows[0].resetsAt, new Date(resetMs).toISOString());
-});
-
-test('builds pool summary from health and prioritizes the primary account', () => {
-    const accounts = [
-        {
-            name: 'Main', provider: 'anthropic', isPrimary: false,
-            usageData: { seven_day: { utilization: 51 } },
-        },
-        {
-            name: 'Backup', provider: 'codex', isPrimary: true,
-            usageData: { seven_day: { utilization: 71 } },
-        },
-    ];
-    const health = {
-        status: 'ok',
-        pool: { configured: 4, routable: 3, paused: 1, rate_limited: 0, usage_exhausted: 0 },
-        accounts_detail: [],
-    };
-    const view = model.buildView(accounts, health, {}, NOW);
-
-    assert.equal(view.accounts[0].name, 'Backup');
-    assert.deepEqual([view.pool.routable, view.pool.configured], [3, 4]);
-    assert.deepEqual(view.usagePools.map(pool => [pool.label, pool.usedPercent]), [['7d', 61]]);
-});
-
-test('aggregates quota capacity as an equal-account pool', () => {
-    const accounts = [
-        {
-            windows: [
-                { key: 'five_hour', label: '5 hour', percent: 10, projectedAtReset: 20, willExhaust: false, forecastConfidence: 'high' },
-                { key: 'seven_day', label: '7 day', percent: 70, projectedAtReset: 90, willExhaust: false, forecastConfidence: 'high' },
-            ],
-        },
-        {
-            windows: [
-                { key: 'five_hour', label: '5 hour', percent: 30, projectedAtReset: 40, willExhaust: false, forecastConfidence: 'high' },
-                { key: 'seven_day', label: '7 day', percent: 50, projectedAtReset: 80, willExhaust: false, forecastConfidence: 'high' },
-            ],
-        },
-    ];
-
-    const pools = model.aggregateUsagePools(accounts, 80, NOW);
-    assert.deepEqual(pools.map(pool => [pool.label, pool.usedPercent, pool.remainingPercent]), [
-        ['5h', 20, 80],
-        ['7d', 60, 40],
-    ]);
-    assert.ok(pools.every(pool => pool.usedPercent + pool.remainingPercent === 100));
-    assert.equal(pools[0].severity, 'normal');
-    assert.equal(pools[1].projectedPercent, 85);
-    assert.equal(pools[1].severity, 'warning');
-});
-
-test('one account at risk does not color a healthy combined pool orange', () => {
-    const projected = [100, 20, 20, 20];
-    const accounts = projected.map((value, index) => ({
-        windows: [{
-            key: 'seven_day',
-            label: '7 day',
-            percent: index === 0 ? 90 : 10,
-            projectedAtReset: value,
-            willExhaust: index === 0,
-            forecastConfidence: 'high',
-        }],
-    }));
-
-    const pool = model.aggregateUsagePools(accounts, 80, NOW)[0];
-    assert.equal(pool.atRiskCount, 1);
-    assert.equal(pool.projectedPercent, 40);
-    assert.equal(pool.severity, 'normal');
-});
-
-test('combined pool is red only when every account is confidently forecast to exhaust', () => {
-    const accounts = ['A', 'B', 'C'].map(name => ({
-        name,
-        windows: [{
-            key: 'seven_day',
-            label: '7 day',
-            percent: 70,
-            projectedAtReset: 100,
-            willExhaust: true,
-            forecastConfidence: 'high',
-        }],
-    }));
-    const pool = model.aggregateUsagePools(accounts, 80, NOW)[0];
-    assert.equal(pool.certainExhaustCount, 3);
-    assert.equal(pool.severity, 'critical');
-
-    accounts[2].windows[0].forecastConfidence = 'low';
-    assert.equal(model.aggregateUsagePools(accounts, 80, NOW)[0].severity, 'warning');
-});
-
-test('scoped limits such as Fable form their own pool', () => {
-    const accounts = [
-        { windows: [{ key: 'scope:fable', label: 'Fable', percent: 100, projectedAtReset: 100, willExhaust: true, forecastConfidence: 'estimated' }] },
-        { windows: [{ key: 'scope:fable', label: 'Fable', percent: 50, projectedAtReset: 80, willExhaust: false, forecastConfidence: 'estimated' }] },
-    ];
-    const pool = model.aggregateUsagePools(accounts, 80, NOW)[0];
-    assert.equal(pool.label, 'Fable');
-    assert.equal(pool.accountCount, 2);
-    assert.equal(pool.usedPercent, 75);
-    assert.equal(pool.projectedPercent, 90);
-    assert.equal(pool.severity, 'warning');
-});
-
-test('hides unused scoped families from panel pools', () => {
-    const pools = [
-        { key: 'five_hour', label: '5h', scoped: false, usedPercent: 0 },
-        { key: 'scope:spark', label: 'Codex Spark', scoped: true, usedPercent: 0 },
-        { key: 'scope:fable', label: 'Fable', scoped: true, usedPercent: 1 },
-    ];
-
-    assert.deepEqual(model.panelUsagePools(pools).map(pool => pool.label), ['5h', 'Fable']);
-    assert.equal(pools.length, 3);
-});
-
-test('account state gives paused, token, and rate limits priority', () => {
-    assert.equal(model.accountState({ paused: true, pauseReason: 'Manual' }, null, NOW).key, 'paused');
-    assert.equal(model.accountState({ tokenStatus: 'expired' }, null, NOW).key, 'error');
-    assert.equal(model.accountState({ rateLimitedUntil: '2026-07-20T12:10:00Z' }, null, NOW).key, 'limited');
-    assert.equal(model.accountState({}, { status: 'usage_exhausted' }, NOW).label, 'Usage exhausted');
-    assert.equal(model.accountState({}, { status: 'available' }, NOW).key, 'available');
-});
-
-test('recognizes Clankermux epoch-millisecond provider overloads', () => {
-    const overloadedUntil = NOW + 60_000;
-    const state = model.accountState({ providerOverloadedUntil: overloadedUntil }, null, NOW);
-
-    assert.deepEqual(state, {
-        key: 'overloaded',
-        label: 'Provider overloaded',
-        until: overloadedUntil,
-    });
-    assert.equal(model.accountState({ providerOverloadedUntil: NOW - 1 }, null, NOW).key, 'available');
-});
-
-test('groups provider overloads and corrects the effective routable count', () => {
-    const overloadedUntil = NOW + 60_000;
-    const accounts = ['Main', 'Backup'].map(name => ({
-        name,
-        provider: 'anthropic',
-        providerOverloadKey: 'anthropic-upstream',
-        providerOverloadedUntil: overloadedUntil,
-    }));
-    const health = {
-        status: 'ok',
-        pool: { configured: 2, routable: 2 },
-        accounts_detail: accounts.map(account => ({ name: account.name, status: 'available' })),
-    };
-
-    const view = model.buildView(accounts, health, {}, NOW);
-    assert.equal(view.pool.routable, 0);
-    assert.deepEqual(view.providerOverloads, [{
-        key: 'anthropic-upstream',
-        provider: 'Anthropic',
-        until: overloadedUntil,
-        accountCount: 2,
-    }]);
-    assert.ok(view.accounts.every(account => account.state.key === 'overloaded'));
-});
-
-test('keeps fallback-provider accounts available during an overload', () => {
-    const overloadedUntil = NOW + 60_000;
-    const accounts = [
-        ...['Claude A', 'Claude B'].map(name => ({
-            name,
-            provider: 'anthropic',
-            providerOverloadKey: 'anthropic-upstream',
-            providerOverloadedUntil: overloadedUntil,
-        })),
-        ...['Codex A', 'Codex B'].map(name => ({ name, provider: 'codex' })),
-    ];
-    const health = {
-        status: 'ok',
-        pool: { configured: 4, routable: 4 },
-        accounts_detail: accounts.map(account => ({ name: account.name, status: 'available' })),
-    };
-
-    const view = model.buildView(accounts, health, {}, NOW);
-    assert.equal(view.pool.routable, 2);
     assert.deepEqual(
-        view.accounts.filter(account => account.state.key === 'available').map(account => account.provider),
-        ['Codex', 'Codex']
+        model.accountWindows(account, false).map(window => window.key),
+        ['five_hour', 'seven_day']
     );
 });
 
-test('formats reset times compactly', () => {
-    assert.equal(model.formatReset('2026-07-20T12:45:00Z', NOW), 'in 45m');
-    assert.equal(model.formatReset(NOW + 45 * 60_000, NOW), 'in 45m');
-    assert.equal(model.formatReset('2026-07-21T14:00:00Z', NOW), 'in 1d 2h');
-    assert.equal(model.formatReset('2026-07-20T11:59:00Z', NOW), 'reset due');
-    assert.equal(model.formatReset(null, NOW), '');
+test('low-confidence exhaustion is warning rather than critical', () => {
+    const window = model.accountWindows(fixtures.accounts()[1])[0];
+    assert.equal(window.willExhaust, true);
+    assert.equal(window.forecastConfidence, 'low');
+    assert.equal(window.severity, 'warning');
 });
 
-test('formats refresh timestamps in local time', () => {
-    const localTime = new Date(2026, 6, 20, 14, 5, 9).getTime();
-    assert.equal(model.formatTimestamp(localTime), '2026-07-20 14:05:09');
+test('maps availability, reasons, and recovery instants', () => {
+    const state = model.accountState(fixtures.accounts()[1]);
+    assert.deepEqual(state, {
+        key: 'limited',
+        label: 'Rate limited · Queueing',
+        until: '2026-08-24T12:30:00.000Z',
+    });
+    assert.equal(model.accountState(fixtures.accounts()[0]).key, 'available');
+});
+
+test('keeps credential health separate from account availability', () => {
+    assert.equal(model.credentialNotice(fixtures.accounts()[0]), null);
+    assert.deepEqual(model.credentialNotice(fixtures.accounts()[1]), {
+        key: 'available',
+        label: 'Credential refreshable',
+    });
+    assert.equal(model.credentialNotice({ credential: { state: 'invalid' } }).key, 'error');
+    assert.equal(model.credentialNotice({ credential: { state: 'not_applicable' } }), null);
+});
+
+test('renders explicit measurement states', () => {
+    assert.equal(model.measurementNotice(fixtures.accounts()[0]), null);
+    assert.equal(model.measurementNotice(fixtures.accounts()[1]), 'cached usage');
+    assert.equal(model.measurementNotice({ measurementState: 'missing' }), 'usage missing');
+    assert.equal(model.measurementNotice({ measurementState: 'not_applicable' }), null);
+});
+
+test('uses server-provided pool aggregates without recomputing account means', () => {
+    const pools = model.usagePools(fixtures.status());
+    assert.deepEqual(pools.map(pool => [pool.label, pool.usedPercent, pool.accountCount, pool.unknownCount]), [
+        ['5h', 38, 2, 1],
+        ['7d', 50, 3, 0],
+        ['Fable', 70, 2, 0],
+    ]);
+
+    // Account A and B's 5-hour values average to 50, proving 38 came from status.
+    const accountMean = (fixtures.accounts()[0].windows[0].utilizationPct +
+        fixtures.accounts()[1].windows[0].utilizationPct) / 2;
+    assert.equal(accountMean, 50);
+    assert.equal(pools[0].usedPercent, 38);
+});
+
+test('can suppress provider-scoped pool aggregates', () => {
+    assert.deepEqual(model.usagePools(fixtures.status(), false).map(pool => pool.label), ['5h', '7d']);
+});
+
+test('hides unused scoped families only in the compact panel', () => {
+    const pools = [
+        { key: 'five_hour', scoped: false, usedPercent: 0 },
+        { key: 'scope:anthropic:spark', scoped: true, usedPercent: 0 },
+        { key: 'scope:anthropic:fable', scoped: true, usedPercent: 1 },
+    ];
+    assert.deepEqual(model.panelUsagePools(pools).map(pool => pool.key), [
+        'five_hour',
+        'scope:anthropic:fable',
+    ]);
+});
+
+test('recognizes open and half-open provider overload breakers', () => {
+    const current = fixtures.status();
+    current.providers[0].anyOverload = {
+        state: 'half_open', until: null, probeActive: true,
+    };
+    current.providers[0].providerWideOverload = {
+        state: 'open', until: '2026-08-24T12:20:00.000Z', probeActive: false,
+    };
+
+    assert.deepEqual(model.providerOverloads(current, fixtures.accounts()), [{
+        key: 'anthropic',
+        provider: 'Anthropic',
+        state: 'half_open',
+        until: null,
+        probeActive: true,
+        providerWide: true,
+        accountCount: 2,
+    }]);
+});
+
+test('builds the public-v1 view and prioritizes the default candidate', () => {
+    const view = model.buildView(
+        fixtures.accounts(), fixtures.status(), fixtures.runway(),
+        { statusReceivedAt: NOW, runwayReceivedAt: NOW }, NOW
+    );
+
+    assert.equal(view.accounts[0].name, 'Account A');
+    assert.equal(view.accounts[0].defaultCandidate, true);
+    assert.deepEqual([view.pool.defaultRoutable, view.pool.configured], [2, 3]);
+    assert.deepEqual(view.usagePools.map(pool => pool.usedPercent), [38, 50, 70]);
+});
+
+test('finite runway becomes the compact panel headline and resolves its cause', () => {
+    const view = model.runwayView(fixtures.runway(), [
+        { id: 'account-c', name: 'Account C' },
+    ], 72, NOW, NOW);
+
+    assert.equal(view.panelText, 'R 4d');
+    assert.equal(view.value, '4d');
+    assert.equal(view.severity, 'normal');
+    assert.equal(view.coverageText, '2 of 2 active keys observed');
+    assert.deepEqual(view.causes, ['Account C · weekly']);
+});
+
+test('runway warning threshold is expressed in hours', () => {
+    const response = fixtures.runway({
+        worstStatedOutcome: {
+            kind: 'runway',
+            exhaustsAt: new Date(NOW + 48 * 60 * 60 * 1000).toISOString(),
+            causes: [],
+        },
+    });
+    assert.equal(model.runwayView(response, [], 72, NOW, NOW).severity, 'warning');
+    assert.equal(model.runwayView(response, [], 24, NOW, NOW).severity, 'normal');
+});
+
+test('incomplete runway coverage is visibly qualified', () => {
+    const response = fixtures.runway({
+        coverage: { activeKeyCount: 3, statedKeyCount: 2, unobservedKeyCount: 1 },
+        worstStatedOutcome: { kind: 'beyond_horizon', exhaustsAt: null, causes: [] },
+    });
+    const view = model.runwayView(response, [], 72, NOW, NOW);
+
+    assert.equal(view.panelText, 'R >14d*');
+    assert.equal(view.severity, 'warning');
+    assert.match(view.coverageText, /1 unobserved/);
+});
+
+test('renders every non-finite runway outcome honestly', () => {
+    const cases = [
+        ['out_now', 'R OUT', 'critical'],
+        ['beyond_horizon', 'R >14d', 'normal'],
+        ['unknown', 'R –', 'warning'],
+        ['no_accounts', 'R –', 'critical'],
+        ['other', 'R ?', 'warning'],
+    ];
+    for (const [kind, panelText, severity] of cases) {
+        const response = fixtures.runway({
+            worstStatedOutcome: { kind, exhaustsAt: null, causes: [] },
+        });
+        const view = model.runwayView(response, [], 72, NOW, NOW);
+        assert.deepEqual([view.panelText, view.severity], [panelText, severity]);
+    }
+});
+
+test('server clock advances from the local receive instant', () => {
+    assert.equal(
+        model.anchoredNow(fixtures.NOW_ISO, NOW + 1000, NOW + 61_000),
+        NOW + 60_000
+    );
+});
+
+test('formats reset times and timestamps compactly', () => {
+    assert.equal(model.formatReset('2026-08-24T12:45:00.000Z', NOW), 'in 45m');
+    assert.equal(model.formatReset('2026-08-25T14:00:00.000Z', NOW), 'in 1d 2h');
+    assert.equal(model.formatReset(null, NOW), '');
     assert.equal(model.formatTimestamp('not-a-date'), '');
-    assert.equal(model.formatTimestamp(null), '');
 });

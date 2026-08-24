@@ -23,6 +23,11 @@
     color: #ef7777;
 }
 
+.clankermux-info.warning .clankermux-info-title,
+.clankermux-info.warning .clankermux-info-subtitle {
+    color: #e5b95c;
+}
+
 .clankermux-account {
     min-width: 560px;
     spacing: 4px;
@@ -142,21 +147,25 @@
 }
 
 .clankermux-reset.pooled {
-    width: 130px;
+    width: 210px;
 }
 
 .clankermux-panel-content {
     spacing: 10px;
 }
 
-.clankermux-panel-accounts {
+.clankermux-panel-runway {
     font-weight: bold;
     color: #8bd49c;
 }
 
-.clankermux-panel-accounts.warning,
+.clankermux-panel-runway.warning,
 .clankermux-panel-error {
     color: #e5b95c;
+}
+
+.clankermux-panel-runway.critical {
+    color: #ef7777;
 }
 
 .clankermux-panel-loading {

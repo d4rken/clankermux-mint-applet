@@ -1,8 +1,8 @@
 {
   "name": "clankermux-usage-cinnamon-applet",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
-  "description": "Cinnamon panel applet for Clankermux account usage",
+  "description": "Cinnamon panel applet for Clankermux quota runway and account usage",
   "license": "GPL-3.0-only",
   "repository": {
     "type": "git",
@@ -10,7 +10,7 @@
   },
   "scripts": {
     "check": "node --check applet.js && node --check usageModel.js && node --check pollingController.js",
-    "test": "node --test"
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=18"

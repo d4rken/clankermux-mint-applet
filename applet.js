@@ -12,6 +12,7 @@ const St = imports.gi.St;
 
 const UUID = 'clankermux-usage@d4rken';
 const PROGRESS_WIDTH = 116;
+const RUNWAY_REFRESH_MS = 5 * 60 * 1000;
 
 function createProgressTrack(percent, severity, width, styleClass = 'clankermux-progress-track') {
     const track = new St.Bin({
@@ -50,7 +51,7 @@ class InfoMenuItem extends PopupMenu.PopupBaseMenuItem {
     }
 }
 
-function createUsageBar(window, model) {
+function createUsageBar(window, model, nowMs) {
     const row = new St.BoxLayout({ vertical: false, style_class: 'clankermux-usage-row' });
 
     const label = new St.Label({
@@ -73,7 +74,7 @@ function createUsageBar(window, model) {
         y_align: Clutter.ActorAlign.CENTER,
     }));
     row.add_child(new St.Label({
-        text: model.formatReset(window.resetsAt),
+        text: model.formatReset(window.resetsAt, nowMs),
         style_class: 'clankermux-reset',
         y_align: Clutter.ActorAlign.CENTER,
     }));
@@ -109,12 +110,12 @@ function updatePanelMeter(meter, pool, width, showPercentages) {
 }
 
 class PoolSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
-    constructor(pools, model) {
+    constructor(pools, model, nowMs) {
         super({ reactive: false });
         const outer = new St.BoxLayout({ vertical: true, style_class: 'clankermux-pools' });
-        outer.add_child(new St.Label({ text: 'Combined runway', style_class: 'clankermux-account-name' }));
+        outer.add_child(new St.Label({ text: 'Pool usage', style_class: 'clankermux-account-name' }));
         outer.add_child(new St.Label({
-            text: 'Equal-capacity average across accounts · arrow is projected usage at reset',
+            text: 'Server-reported mean across accounts that supplied each quota window',
             style_class: 'clankermux-info-subtitle',
         }));
 
@@ -131,13 +132,10 @@ class PoolSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
                 style_class: 'clankermux-percent',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
+            const unknown = pool.unknownCount ? ` · ${pool.unknownCount} unknown` : '';
+            const nextReset = model.formatReset(pool.nextResetAt, nowMs) || '–';
             row.add_child(new St.Label({
-                text: pool.forecastCount ? `→${pool.projectedPercent}%` : '→–',
-                style_class: `clankermux-forecast ${pool.severity}`,
-                y_align: Clutter.ActorAlign.CENTER,
-            }));
-            row.add_child(new St.Label({
-                text: `${pool.accountCount} acct${pool.accountCount === 1 ? '' : 's'} · next ${model.formatReset(pool.nextResetAt)}`,
+                text: `${pool.accountCount} acct${pool.accountCount === 1 ? '' : 's'}${unknown} · next ${nextReset}`,
                 style_class: 'clankermux-reset pooled',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
@@ -148,7 +146,7 @@ class PoolSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
 }
 
 class AccountMenuItem extends PopupMenu.PopupBaseMenuItem {
-    constructor(account, model) {
+    constructor(account, model, nowMs) {
         super({ reactive: false });
         const outer = new St.BoxLayout({ vertical: true, style_class: 'clankermux-account' });
 
@@ -158,9 +156,9 @@ class AccountMenuItem extends PopupMenu.PopupBaseMenuItem {
             style_class: 'clankermux-account-name',
             y_align: Clutter.ActorAlign.CENTER,
         }));
-        if (account.primary) {
+        if (account.defaultCandidate) {
             heading.add_child(new St.Label({
-                text: 'ACTIVE',
+                text: 'DEFAULT',
                 style_class: 'clankermux-primary-badge',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
@@ -176,17 +174,19 @@ class AccountMenuItem extends PopupMenu.PopupBaseMenuItem {
 
         const stateParts = [account.state.label];
         if (account.state.until)
-            stateParts.push(`retry ${model.formatReset(account.state.until)}`);
-        if (account.stale)
-            stateParts.push('cached usage');
+            stateParts.push(`retry ${model.formatReset(account.state.until, nowMs)}`);
+        if (account.credential)
+            stateParts.push(account.credential.label);
+        if (account.measurementNotice)
+            stateParts.push(account.measurementNotice);
         outer.add_child(new St.Label({
             text: stateParts.join(' · '),
-            style_class: `clankermux-state ${account.state.key}`,
+            style_class: `clankermux-state ${account.stateClass}`,
         }));
 
         if (account.windows.length) {
             for (const window of account.windows)
-                outer.add_child(createUsageBar(window, model));
+                outer.add_child(createUsageBar(window, model, nowMs));
         } else {
             outer.add_child(new St.Label({
                 text: 'Usage data not available yet',
@@ -210,7 +210,12 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._requestGeneration = 0;
         this._refreshing = false;
         this._accounts = null;
-        this._health = null;
+        this._status = null;
+        this._runway = null;
+        this._statusReceivedAt = 0;
+        this._runwayReceivedAt = 0;
+        this._lastRunwayAttempt = 0;
+        this._lastRunwayError = '';
         this._view = null;
         this._lastSuccess = 0;
         this._lastError = '';
@@ -237,7 +242,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
 
         this.setAllowedLayout(Applet.AllowedLayout.HORIZONTAL);
         this._panelContent = new St.BoxLayout({ style_class: 'clankermux-panel-content' });
-        this._panelAccountsLabel = new St.Label({
+        this._panelRunwayLabel = new St.Label({
             text: 'Clankermux …',
             style_class: 'clankermux-panel-loading',
             y_align: Clutter.ActorAlign.CENTER,
@@ -249,7 +254,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
         });
         this._panelEmptyLabel.visible = false;
         this._panelMeters = new Map();
-        this._panelContent.add_child(this._panelAccountsLabel);
+        this._panelContent.add_child(this._panelRunwayLabel);
         this._panelContent.add_child(this._panelEmptyLabel);
         this.actor.add(this._panelContent, { y_align: St.Align.MIDDLE, y_fill: false });
         this.set_applet_tooltip('Loading Clankermux usage…');
@@ -283,16 +288,16 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this.settings.bind('api-url', 'apiUrl', this._onConnectionSettingsChanged.bind(this));
         this.settings.bind('refresh-interval', 'refreshInterval', this._onPollingSettingsChanged.bind(this));
         this.settings.bind('request-timeout', 'requestTimeout', this._onConnectionSettingsChanged.bind(this));
-        this.settings.bind('warning-threshold', 'warningThreshold', this._render.bind(this));
+        this.settings.bind('runway-warning-hours', 'runwayWarningHours', this._render.bind(this));
         this.settings.bind('panel-bar-width', 'panelBarWidth', this._render.bind(this));
         this.settings.bind('show-panel-percentages', 'showPanelPercentages', this._render.bind(this));
         this.settings.bind('show-scoped-limits', 'showScopedLimits', this._render.bind(this));
-        this.settings.bind('primary-first', 'primaryFirst', this._render.bind(this));
+        this.settings.bind('default-candidate-first', 'defaultCandidateFirst', this._render.bind(this));
 
         this._createSession();
         this._schedulePolling();
         this._render();
-        this._refresh();
+        this._refresh(true);
     }
 
     _createSession() {
@@ -300,7 +305,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
             this._session.abort();
         this._session = new Soup.Session();
         this._session.timeout = Number(this.requestTimeout || 8);
-        this._session.user_agent = `${UUID}/1.0`;
+        this._session.user_agent = `${UUID}/1.5`;
     }
 
     _onConnectionSettingsChanged() {
@@ -309,8 +314,18 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._requestGeneration++;
         this._cancelActiveRefresh();
         this._refreshing = false;
+        this._accounts = null;
+        this._status = null;
+        this._runway = null;
+        this._statusReceivedAt = 0;
+        this._runwayReceivedAt = 0;
+        this._lastRunwayAttempt = 0;
+        this._lastRunwayError = '';
+        this._lastSuccess = 0;
+        this._lastError = '';
         this._createSession();
-        this._refresh();
+        this._render();
+        this._refresh(true);
     }
 
     _onPollingSettingsChanged() {
@@ -392,19 +407,35 @@ class ClankermuxUsageApplet extends Applet.Applet {
         }
     }
 
-    _refresh() {
+    _refresh(forceRunway = false) {
         if (this._refreshing || this._destroyed)
             return;
         this._refreshing = true;
         const generation = ++this._requestGeneration;
-        const cycle = this._model.createRefreshCycle(2);
+        const fetchRunway = forceRunway || !this._lastRunwayAttempt ||
+            Date.now() - this._lastRunwayAttempt >= RUNWAY_REFRESH_MS;
+        const cycle = this._model.createRefreshCycle(fetchRunway ? 3 : 2);
         const timeoutSeconds = Math.max(2, Number(this.requestTimeout || 8));
         const cancellable = new Gio.Cancellable();
         this._refreshCancellable = cancellable;
         let accountsResult = null;
-        let healthResult = null;
+        let statusResult = null;
+        let runwayResult = null;
         let accountsError = null;
-        let healthError = null;
+        let statusError = null;
+        let runwayError = null;
+        let statusReceivedAt = 0;
+        let runwayReceivedAt = 0;
+
+        const validate = (data, schema, label, shape) => {
+            if (!data || typeof data !== 'object')
+                return new Error(`Unexpected ${label} response`);
+            if (data.schema !== schema)
+                return new Error(`Unsupported ${label} schema: ${data.schema || 'missing'}`);
+            if (!shape(data))
+                return new Error(`Unexpected ${label} response`);
+            return null;
+        };
 
         const complete = () => {
             if (!cycle.completeOne() || this._destroyed || generation !== this._requestGeneration)
@@ -416,17 +447,52 @@ class ClankermuxUsageApplet extends Applet.Applet {
             this._refreshCancellable = null;
             this._refreshing = false;
 
-            if (Array.isArray(accountsResult)) {
-                this._accounts = accountsResult;
+            accountsError = accountsError || validate(
+                accountsResult,
+                'clankermux.public.accounts.v1',
+                'accounts',
+                data => Array.isArray(data.accounts)
+            );
+            statusError = statusError || validate(
+                statusResult,
+                'clankermux.public.status.v1',
+                'status',
+                data => Boolean(data.pool)
+            );
+            if (fetchRunway) {
+                runwayError = runwayError || validate(
+                    runwayResult,
+                    'clankermux.public.runway.v1',
+                    'runway',
+                    data => Boolean(data.coverage)
+                );
+            }
+
+            if (!accountsError)
+                this._accounts = accountsResult.accounts;
+            if (!statusError) {
+                this._status = statusResult;
+                this._statusReceivedAt = statusReceivedAt || Date.now();
+            }
+            if (fetchRunway) {
+                if (!runwayError) {
+                    this._runway = runwayResult;
+                    this._runwayReceivedAt = runwayReceivedAt || Date.now();
+                    this._lastRunwayError = '';
+                } else {
+                    this._lastRunwayError = this._errorMessage(runwayError);
+                }
+            }
+
+            if (!accountsError && !statusError) {
                 this._lastSuccess = Date.now();
                 this._lastError = '';
             } else {
-                this._lastError = this._errorMessage(accountsError || new Error('Unexpected account response'));
+                const failures = [accountsError, statusError]
+                    .filter(Boolean)
+                    .map(error => this._errorMessage(error));
+                this._lastError = failures.join(' · ');
             }
-            if (healthResult?.pool)
-                this._health = healthResult;
-            else if (healthError && !this._accounts)
-                this._lastError = this._errorMessage(healthError);
             this._render();
         };
 
@@ -445,16 +511,26 @@ class ClankermuxUsageApplet extends Applet.Applet {
             return false;
         });
 
-        this._getJson('/api/accounts', generation, cancellable, (error, data) => {
+        this._getJson('/public/v1/accounts', generation, cancellable, (error, data) => {
             accountsError = error;
             accountsResult = data;
             complete();
         });
-        this._getJson('/health?detail=1', generation, cancellable, (error, data) => {
-            healthError = error;
-            healthResult = data;
+        this._getJson('/public/v1/status', generation, cancellable, (error, data) => {
+            statusError = error;
+            statusResult = data;
+            statusReceivedAt = Date.now();
             complete();
         });
+        if (fetchRunway) {
+            this._lastRunwayAttempt = Date.now();
+            this._getJson('/public/v1/runway', generation, cancellable, (error, data) => {
+                runwayError = error;
+                runwayResult = data;
+                runwayReceivedAt = Date.now();
+                complete();
+            });
+        }
     }
 
     _errorMessage(error) {
@@ -468,10 +544,12 @@ class ClankermuxUsageApplet extends Applet.Applet {
         if (!this._model || !this.menu)
             return;
         this._polling.ensure();
-        this._view = this._model.buildView(this._accounts, this._health, {
+        this._view = this._model.buildView(this._accounts, this._status, this._runway, {
             showScoped: this.showScopedLimits !== false,
-            primaryFirst: this.primaryFirst !== false,
-            warningThreshold: Number(this.warningThreshold || 80),
+            defaultCandidateFirst: this.defaultCandidateFirst !== false,
+            runwayWarningHours: Number(this.runwayWarningHours || 72),
+            statusReceivedAt: this._statusReceivedAt,
+            runwayReceivedAt: this._runwayReceivedAt,
         });
         this._renderPanel();
         if (this.menu.isOpen && this._menuStateSignature() !== this._menuSignature)
@@ -480,8 +558,8 @@ class ClankermuxUsageApplet extends Applet.Applet {
 
     _renderPanel() {
         if (!this._accounts) {
-            this._panelAccountsLabel.set_text(this._lastError ? 'Clankermux !' : 'Clankermux …');
-            this._panelAccountsLabel.set_style_class_name(
+            this._panelRunwayLabel.set_text(this._lastError ? 'Clankermux !' : 'Clankermux …');
+            this._panelRunwayLabel.set_style_class_name(
                 this._lastError ? 'clankermux-panel-error' : 'clankermux-panel-loading'
             );
             this._panelEmptyLabel.visible = false;
@@ -491,14 +569,21 @@ class ClankermuxUsageApplet extends Applet.Applet {
             return;
         }
 
+        const availabilityDegraded = this._view.pool.defaultRoutable < this._view.pool.configured;
+        const availabilityMarker = availabilityDegraded
+            ? ` · ${this._view.pool.defaultRoutable}/${this._view.pool.configured}!`
+            : '';
         const overloadMarker = this._view.providerOverloads.length ? ' ⏳' : '';
-        this._panelAccountsLabel.set_text(
-            `${this._view.pool.routable}/${this._view.pool.configured}${overloadMarker}`
+        let runwaySeverity = this._view.runway.severity;
+        if (this._view.pool.defaultRoutable === 0)
+            runwaySeverity = 'critical';
+        else if ((availabilityDegraded || this._view.providerOverloads.length) && runwaySeverity === 'normal')
+            runwaySeverity = 'warning';
+        this._panelRunwayLabel.set_text(
+            `${this._view.runway.panelText}${availabilityMarker}${overloadMarker}`
         );
-        this._panelAccountsLabel.set_style_class_name(
-            this._view.pool.routable === this._view.pool.configured
-                ? 'clankermux-panel-accounts'
-                : 'clankermux-panel-accounts warning'
+        this._panelRunwayLabel.set_style_class_name(
+            `clankermux-panel-runway ${runwaySeverity}`
         );
         const barWidth = Math.max(30, Number(this.panelBarWidth || 52));
         const panelPools = this._model.panelUsagePools(this._view.usagePools);
@@ -528,17 +613,24 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._panelEmptyLabel.visible = !panelPools.length;
 
         const lines = [
-            `Clankermux: ${this._view.pool.routable} of ${this._view.pool.configured} accounts available`,
+            `Quota runway: ${this._view.runway.value}`,
+            this._view.runway.summary,
+            `Coverage: ${this._view.runway.coverageText}`,
+            `Availability: ${this._view.pool.defaultRoutable} of ${this._view.pool.configured} accounts in the default routing context`,
         ];
         for (const overload of this._view.providerOverloads) {
-            lines.push(
-                `${overload.provider} provider overloaded · ${overload.accountCount} account${overload.accountCount === 1 ? '' : 's'} affected · retry ${this._model.formatReset(overload.until)}`
-            );
+            const scope = overload.providerWide ? 'provider-wide' : 'provider or model scope';
+            const retry = overload.until
+                ? ` · retry ${this._model.formatReset(overload.until, this._view.nowMs)}`
+                : overload.probeActive ? ' · recovery probe active' : '';
+            lines.push(`${overload.provider} ${scope} overload ${overload.state}${retry}`);
         }
         for (const pool of this._view.usagePools) {
-            const forecast = pool.forecastCount ? `projected ${pool.projectedPercent}% at reset` : 'forecast unavailable';
-            lines.push(`${pool.label}: ${pool.usedPercent}% used · ${pool.remainingPercent}% left across ${pool.accountCount} · ${forecast}`);
+            const unknown = pool.unknownCount ? ` · ${pool.unknownCount} unknown` : '';
+            lines.push(`${pool.label}: ${pool.usedPercent}% mean usage across ${pool.accountCount} accounts${unknown}`);
         }
+        if (this._lastRunwayError)
+            lines.push(`Last runway refresh failed: ${this._lastRunwayError}`);
         if (this._lastError)
             lines.push(`Last refresh failed: ${this._lastError}`);
         else if (this._lastSuccess)
@@ -552,10 +644,12 @@ class ClankermuxUsageApplet extends Applet.Applet {
             account.id,
             account.name,
             account.provider,
-            account.primary,
+            account.defaultCandidate,
             account.state.key,
             account.state.label,
             account.state.until || null,
+            account.credential?.label || null,
+            account.measurementNotice || null,
             account.stale,
             account.windows.map(window => [
                 window.key,
@@ -565,15 +659,14 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 window.projectedAtReset,
                 window.severity,
                 window.stale,
-                window.active,
+                window.forecastConfidence,
             ]),
         ]);
         const pools = (view?.usagePools || []).map(pool => [
             pool.key,
             pool.accountCount,
+            pool.unknownCount,
             pool.usedPercent,
-            pool.projectedPercent,
-            pool.forecastCount,
             pool.severity,
             pool.nextResetAt,
         ]);
@@ -586,10 +679,12 @@ class ClankermuxUsageApplet extends Applet.Applet {
             Boolean(this._accounts),
             this._model.normalizeBaseUrl(this.apiUrl),
             view?.pool || null,
+            view?.runway || null,
             accounts,
             pools,
             overloads,
             this._lastError || '',
+            this._lastRunwayError || '',
             this._lastSuccess ? 1 : 0,
             this._refreshing ? 1 : 0,
         ]);
@@ -620,25 +715,52 @@ class ClankermuxUsageApplet extends Applet.Applet {
             return;
         }
 
-        let subtitle = `${this._view.pool.routable} of ${this._view.pool.configured} accounts available`;
+        let subtitle = `${this._view.pool.defaultRoutable} of ${this._view.pool.configured} accounts available in the default routing context`;
         if (this._lastError)
             subtitle += ' · showing cached data';
         subtitle += `\n${this._lastRefreshText()}`;
         this.menu.addMenuItem(new InfoMenuItem('Clankermux usage', subtitle));
+
+        const runwayDetails = [
+            this._view.runway.summary,
+            `Coverage: ${this._view.runway.coverageText}`,
+            `Model horizon: ${this._view.runway.horizonText}`,
+        ];
+        if (this._view.runway.ageMs !== null)
+            runwayDetails.push(`Projection updated: ${this._model.formatDuration(this._view.runway.ageMs)} ago`);
+        if (this._view.runway.causes.length)
+            runwayDetails.push(`Cause: ${this._view.runway.causes.join(' + ')}`);
+        if (this._lastRunwayError)
+            runwayDetails.push(`Last runway refresh failed: ${this._lastRunwayError}`);
+        const runwayStyle = this._view.runway.severity === 'critical'
+            ? 'error'
+            : this._view.runway.severity === 'warning' ? 'warning' : '';
+        this.menu.addMenuItem(new InfoMenuItem(
+            `Quota runway · ${this._view.runway.value}`,
+            runwayDetails.join('\n'),
+            runwayStyle
+        ));
         for (const overload of this._view.providerOverloads) {
-            const affected = `${overload.accountCount} account${overload.accountCount === 1 ? '' : 's'} affected`;
+            const scope = overload.providerWide ? 'Provider-wide breaker' : 'Provider/model breaker';
+            const recovery = overload.until
+                ? `retry ${this._model.formatReset(overload.until, this._view.nowMs)}`
+                : overload.probeActive ? 'recovery probe active' : 'awaiting recovery probe';
             this.menu.addMenuItem(new InfoMenuItem(
-                `${overload.provider} provider overloaded`,
-                `${affected} · retry ${this._model.formatReset(overload.until)}`,
+                `${overload.provider} overload ${overload.state}`,
+                `${scope} · ${overload.accountCount} account${overload.accountCount === 1 ? '' : 's'} · ${recovery}`,
                 'overload'
             ));
         }
         if (this._view.usagePools.length)
-            this.menu.addMenuItem(new PoolSummaryMenuItem(this._view.usagePools, this._model));
+            this.menu.addMenuItem(new PoolSummaryMenuItem(
+                this._view.usagePools,
+                this._model,
+                this._view.nowMs
+            ));
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         for (const account of this._view.accounts)
-            this.menu.addMenuItem(new AccountMenuItem(account, this._model));
+            this.menu.addMenuItem(new AccountMenuItem(account, this._model, this._view.nowMs));
 
         if (!this._view.accounts.length)
             this.menu.addMenuItem(new InfoMenuItem('No accounts configured'));
@@ -663,7 +785,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
             St.IconType.SYMBOLIC
         );
         refreshItem.setSensitive(!this._refreshing);
-        refreshItem.connect('activate', () => this._refresh());
+        refreshItem.connect('activate', () => this._refresh(true));
         this.menu.addMenuItem(refreshItem);
 
         const dashboardItem = new PopupMenu.PopupIconMenuItem(
