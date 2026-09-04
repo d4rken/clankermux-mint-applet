@@ -149,7 +149,9 @@ function updatePanelWorkload(meter, row, width, displayValue) {
     meter._clankermuxValue.set_text(displayValue);
     meter._clankermuxValue.set_style_class_name(`clankermux-panel-pace-value ${row.severity}`);
     meter._clankermuxValue.visible = Boolean(displayValue);
-    meter._clankermuxDepth.set_text(row.spentAccounts ? `${row.spentAccounts} spent` : '');
+    meter._clankermuxDepth.set_text(
+        row.spentAccounts ? `${row.spentAccounts}/${row.eligibleAccounts} spent` : ''
+    );
     meter._clankermuxDepth.visible = row.spentAccounts > 0;
 }
 
