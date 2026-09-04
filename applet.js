@@ -12,7 +12,7 @@ const St = imports.gi.St;
 
 const UUID = 'clankermux-usage@d4rken';
 const PROGRESS_WIDTH = 116;
-const RUNWAY_REFRESH_MS = 5 * 60 * 1000;
+const OUTLOOK_REFRESH_MS = 60 * 1000;
 
 function createProgressTrack(percent, severity, width, styleClass = 'clankermux-progress-track') {
     const track = new St.Bin({
@@ -26,7 +26,7 @@ function createProgressTrack(percent, severity, width, styleClass = 'clankermux-
     const fill = new St.Widget({
         style_class: `clankermux-progress-fill ${severity}`,
         width: fillWidth,
-        height: styleClass === 'clankermux-panel-progress-track' ? 8 : 7,
+        height: 7,
     });
     track.set_child(fill);
     track._clankermuxFill = fill;
@@ -38,6 +38,40 @@ function updateProgressTrack(track, percent, severity, width) {
     track.set_width(width);
     track._clankermuxFill.set_width(fillWidth);
     track._clankermuxFill.set_style_class_name(`clankermux-progress-fill ${severity}`);
+}
+
+function createPaceTrack(signal, width, styleClass = 'clankermux-pace-track') {
+    const track = new St.BoxLayout({ style_class: styleClass, width });
+    const halfWidth = Math.max(1, Math.floor(width / 2));
+    track._clankermuxLeft = new St.Bin({ style_class: 'clankermux-pace-half left', width: halfWidth });
+    track._clankermuxLeft.set_fill(false, false);
+    track._clankermuxLeft.set_alignment(St.Align.END, St.Align.MIDDLE);
+    track._clankermuxRight = new St.Bin({ style_class: 'clankermux-pace-half right', width: halfWidth });
+    track._clankermuxRight.set_fill(false, false);
+    track._clankermuxRight.set_alignment(St.Align.START, St.Align.MIDDLE);
+    track._clankermuxLeftFill = new St.Widget({ height: 8 });
+    track._clankermuxRightFill = new St.Widget({ height: 8 });
+    track._clankermuxLeft.set_child(track._clankermuxLeftFill);
+    track._clankermuxRight.set_child(track._clankermuxRightFill);
+    track.add_child(track._clankermuxLeft);
+    track.add_child(track._clankermuxRight);
+    updatePaceTrack(track, signal, width);
+    return track;
+}
+
+function updatePaceTrack(track, signal, width) {
+    const halfWidth = Math.max(1, Math.floor(width / 2));
+    const fillWidth = signal.fillPercent <= 0
+        ? 0
+        : Math.max(2, Math.round(halfWidth * signal.fillPercent / 100));
+    track.set_width(width);
+    track._clankermuxLeft.set_width(halfWidth);
+    track._clankermuxRight.set_width(halfWidth);
+    track._clankermuxLeftFill.set_width(signal.side === 'left' ? fillWidth : 0);
+    track._clankermuxRightFill.set_width(signal.side === 'right' ? fillWidth : 0);
+    const style = `clankermux-pace-fill ${signal.severity}`;
+    track._clankermuxLeftFill.set_style_class_name(style);
+    track._clankermuxRightFill.set_style_class_name(style);
 }
 
 class InfoMenuItem extends PopupMenu.PopupBaseMenuItem {
@@ -81,65 +115,162 @@ function createUsageBar(window, model, nowMs) {
     return row;
 }
 
-function createPanelMeter(pool, width, showPercentages) {
-    const meter = new St.BoxLayout({ style_class: 'clankermux-panel-meter' });
+function createPanelPace(signal, width) {
+    const meter = new St.BoxLayout({ style_class: 'clankermux-panel-pace' });
     meter._clankermuxLabel = new St.Label({
-        style_class: 'clankermux-panel-meter-label',
+        text: 'PACE',
+        style_class: 'clankermux-panel-pace-label',
         y_align: Clutter.ActorAlign.CENTER,
     });
     meter.add_child(meter._clankermuxLabel);
-    meter._clankermuxTrack = createProgressTrack(
-        pool.usedPercent,
-        pool.severity,
-        width,
-        'clankermux-panel-progress-track'
-    );
+    meter._clankermuxTrack = createPaceTrack(signal, width, 'clankermux-panel-pace-track');
     meter.add_child(meter._clankermuxTrack);
-    meter._clankermuxPercent = new St.Label({ y_align: Clutter.ActorAlign.CENTER });
-    meter.add_child(meter._clankermuxPercent);
-    updatePanelMeter(meter, pool, width, showPercentages);
+    meter._clankermuxAction = new St.Label({ y_align: Clutter.ActorAlign.CENTER });
+    meter.add_child(meter._clankermuxAction);
+    updatePanelPace(meter, signal, width);
     return meter;
 }
 
-function updatePanelMeter(meter, pool, width, showPercentages) {
-    meter._clankermuxLabel.set_text(pool.label);
-    updateProgressTrack(meter._clankermuxTrack, pool.usedPercent, pool.severity, width);
-    meter._clankermuxPercent.set_text(`${pool.usedPercent}%`);
-    meter._clankermuxPercent.set_style_class_name(`clankermux-panel-percent ${pool.severity}`);
-    meter._clankermuxPercent.visible = showPercentages;
+function updatePanelPace(meter, signal, width) {
+    updatePaceTrack(meter._clankermuxTrack, signal, width);
+    meter._clankermuxAction.set_text(signal.action);
+    meter._clankermuxAction.set_style_class_name(`clankermux-panel-pace-action ${signal.severity}`);
 }
 
-class PoolSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
-    constructor(pools, model, nowMs) {
+function createPanelWorkload(row, width, showValues) {
+    const meter = new St.BoxLayout({ style_class: 'clankermux-panel-workload' });
+    meter._clankermuxLabel = new St.Label({
+        style_class: 'clankermux-panel-workload-label',
+        y_align: Clutter.ActorAlign.CENTER,
+    });
+    meter.add_child(meter._clankermuxLabel);
+    meter._clankermuxBasis = new St.Label({
+        text: 'B',
+        style_class: 'clankermux-bound-badge',
+        y_align: Clutter.ActorAlign.CENTER,
+    });
+    meter.add_child(meter._clankermuxBasis);
+    meter._clankermuxTrack = createPaceTrack(row, width, 'clankermux-panel-pace-track');
+    meter.add_child(meter._clankermuxTrack);
+    meter._clankermuxValue = new St.Label({ y_align: Clutter.ActorAlign.CENTER });
+    meter.add_child(meter._clankermuxValue);
+    meter._clankermuxDepth = new St.Label({
+        style_class: 'clankermux-panel-depth',
+        y_align: Clutter.ActorAlign.CENTER,
+    });
+    meter.add_child(meter._clankermuxDepth);
+    updatePanelWorkload(meter, row, width, showValues);
+    return meter;
+}
+
+function updatePanelWorkload(meter, row, width, showValues) {
+    meter._clankermuxLabel.set_text(`${row.label}${row.incomplete ? '*' : ''}`);
+    meter._clankermuxBasis.set_text(row.basis === 'bound' ? 'B' : '?');
+    meter._clankermuxBasis.visible = row.basis !== 'exact';
+    updatePaceTrack(meter._clankermuxTrack, row, width);
+    meter._clankermuxValue.set_text(showValues ? row.valueText : row.action);
+    meter._clankermuxValue.set_style_class_name(`clankermux-panel-pace-value ${row.severity}`);
+    meter._clankermuxDepth.set_text(row.spentAccounts ? `${row.spentAccounts} spent` : '');
+    meter._clankermuxDepth.visible = row.spentAccounts > 0;
+}
+
+class PaceMenuItem extends PopupMenu.PopupBaseMenuItem {
+    constructor(pace) {
         super({ reactive: false });
-        const outer = new St.BoxLayout({ vertical: true, style_class: 'clankermux-pools' });
-        outer.add_child(new St.Label({ text: 'Pool usage', style_class: 'clankermux-account-name' }));
+        const outer = new St.BoxLayout({ vertical: true, style_class: 'clankermux-pace-summary' });
+        const heading = new St.BoxLayout({ style_class: 'clankermux-pace-summary-heading' });
+        heading.add_child(new St.Label({ text: 'Pool pace', style_class: 'clankermux-account-name' }));
+        heading.add_child(createPaceTrack(pace, 170));
+        heading.add_child(new St.Label({
+            text: pace.valueText,
+            style_class: `clankermux-pace-summary-value ${pace.severity}`,
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
+        outer.add_child(heading);
         outer.add_child(new St.Label({
-            text: 'Server-reported mean across accounts that supplied each quota window',
+            text: `${pace.summary}\nCoverage: ${pace.coverageText}`,
             style_class: 'clankermux-info-subtitle',
         }));
+        this.addActor(outer, { expand: true });
+    }
+}
 
-        for (const pool of pools) {
-            const row = new St.BoxLayout({ style_class: 'clankermux-pool-row' });
+class WorkloadSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
+    constructor(workloads) {
+        super({ reactive: false });
+        const outer = new St.BoxLayout({ vertical: true, style_class: 'clankermux-workloads' });
+        outer.add_child(new St.Label({ text: 'Workload headroom', style_class: 'clankermux-account-name' }));
+        for (const workload of workloads) {
+            const row = new St.BoxLayout({ style_class: 'clankermux-workload-row' });
             row.add_child(new St.Label({
-                text: pool.label,
-                style_class: 'clankermux-pool-label',
+                text: `${workload.label}${workload.incomplete ? '*' : ''}`,
+                style_class: 'clankermux-workload-label',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
-            row.add_child(createProgressTrack(pool.usedPercent, pool.severity, 170));
+            if (workload.basis !== 'exact') {
+                row.add_child(new St.Label({
+                    text: workload.basis === 'bound' ? 'BOUND' : 'UNKNOWN',
+                    style_class: 'clankermux-bound-badge',
+                }));
+            }
+            row.add_child(createPaceTrack(workload, 150));
             row.add_child(new St.Label({
-                text: `${pool.usedPercent}%`,
-                style_class: 'clankermux-percent',
-                y_align: Clutter.ActorAlign.CENTER,
-            }));
-            const unknown = pool.unknownCount ? ` · ${pool.unknownCount} unknown` : '';
-            const nextReset = model.formatReset(pool.nextResetAt, nowMs) || '–';
-            row.add_child(new St.Label({
-                text: `${pool.accountCount} acct${pool.accountCount === 1 ? '' : 's'}${unknown} · next ${nextReset}`,
-                style_class: 'clankermux-reset pooled',
+                text: workload.valueText,
+                style_class: `clankermux-workload-value ${workload.severity}`,
                 y_align: Clutter.ActorAlign.CENTER,
             }));
             outer.add_child(row);
+            outer.add_child(new St.Label({
+                text: `${workload.summary} · ${workload.basisLabel} · ${workload.depthText} · ${workload.projectionLabel}`,
+                style_class: 'clankermux-info-subtitle',
+            }));
+        }
+        this.addActor(outer, { expand: true });
+    }
+}
+
+class PacingSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
+    constructor(pacing, model, nowMs) {
+        super({ reactive: false });
+        const outer = new St.BoxLayout({ vertical: true, style_class: 'clankermux-class-pacing' });
+        outer.add_child(new St.Label({ text: 'Class pacing', style_class: 'clankermux-account-name' }));
+        outer.add_child(new St.Label({
+            text: `5-hour governor: ${model.humanizeStatus(pacing.fiveHourOutlookTone)}`,
+            style_class: `clankermux-five-hour ${pacing.fiveHourSeverity}`,
+        }));
+        for (const item of pacing.classes) {
+            const heading = `${item.label}${item.binding ? ' · BINDING' : ''}`;
+            const utilization = item.utilizationPct === null ? 'weekly usage unknown' :
+                `${item.utilizationPct}% used on least-used account`;
+            const reset = item.resetsAt ? ` · resets ${model.formatReset(item.resetsAt, nowMs)}` : '';
+            const failover = item.singlePointOfFailure ? ' · no failover' : '';
+            const projection = item.willRunOut
+                ? ` · ${item.willRunOut} of ${item.eligibleTotal} projected to hit 100%`
+                : '';
+            outer.add_child(new St.Label({
+                text: heading,
+                style_class: `clankermux-class-heading ${item.severity}`,
+            }));
+            outer.add_child(new St.Label({
+                text: `${utilization}${reset}${projection}${failover}`,
+                style_class: 'clankermux-info-subtitle',
+            }));
+            outer.add_child(new St.Label({
+                text: `Burn: ${item.burnText}`,
+                style_class: `clankermux-burn ${item.burnSeverity}`,
+            }));
+            let fiveHourSummary = item.fiveHour.summary;
+            const nextLift = model.formatReset(item.fiveHour.nextLiftAt, nowMs);
+            if (nextLift) {
+                const account = item.fiveHour.nextLiftAccountName
+                    ? ` on ${item.fiveHour.nextLiftAccountName}`
+                    : '';
+                fiveHourSummary += ` · next lift ${nextLift}${account}`;
+            }
+            outer.add_child(new St.Label({
+                text: fiveHourSummary,
+                style_class: 'clankermux-five-hour',
+            }));
         }
         this.addActor(outer, { expand: true });
     }
@@ -212,10 +343,16 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._accounts = null;
         this._status = null;
         this._runway = null;
+        this._pacing = null;
+        this._workloadHeadroom = null;
         this._statusReceivedAt = 0;
         this._runwayReceivedAt = 0;
-        this._lastRunwayAttempt = 0;
+        this._pacingReceivedAt = 0;
+        this._workloadHeadroomReceivedAt = 0;
+        this._lastOutlookAttempt = 0;
         this._lastRunwayError = '';
+        this._lastPacingError = '';
+        this._lastWorkloadHeadroomError = '';
         this._view = null;
         this._lastSuccess = 0;
         this._lastError = '';
@@ -242,19 +379,17 @@ class ClankermuxUsageApplet extends Applet.Applet {
 
         this.setAllowedLayout(Applet.AllowedLayout.HORIZONTAL);
         this._panelContent = new St.BoxLayout({ style_class: 'clankermux-panel-content' });
-        this._panelRunwayLabel = new St.Label({
-            text: 'Clankermux …',
-            style_class: 'clankermux-panel-loading',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
+        this._panelPace = createPanelPace({
+            action: '…', side: 'none', fillPercent: 0, severity: 'unknown',
+        }, 52);
         this._panelEmptyLabel = new St.Label({
             text: 'quota –',
             style_class: 'clankermux-panel-loading',
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._panelEmptyLabel.visible = false;
-        this._panelMeters = new Map();
-        this._panelContent.add_child(this._panelRunwayLabel);
+        this._panelWorkloads = new Map();
+        this._panelContent.add_child(this._panelPace);
         this._panelContent.add_child(this._panelEmptyLabel);
         this.actor.add(this._panelContent, { y_align: St.Align.MIDDLE, y_fill: false });
         this.set_applet_tooltip('Loading Clankermux usage…');
@@ -305,7 +440,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
             this._session.abort();
         this._session = new Soup.Session();
         this._session.timeout = Number(this.requestTimeout || 8);
-        this._session.user_agent = `${UUID}/1.5`;
+        this._session.user_agent = `${UUID}/1.6`;
     }
 
     _onConnectionSettingsChanged() {
@@ -317,10 +452,16 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._accounts = null;
         this._status = null;
         this._runway = null;
+        this._pacing = null;
+        this._workloadHeadroom = null;
         this._statusReceivedAt = 0;
         this._runwayReceivedAt = 0;
-        this._lastRunwayAttempt = 0;
+        this._pacingReceivedAt = 0;
+        this._workloadHeadroomReceivedAt = 0;
+        this._lastOutlookAttempt = 0;
         this._lastRunwayError = '';
+        this._lastPacingError = '';
+        this._lastWorkloadHeadroomError = '';
         this._lastSuccess = 0;
         this._lastError = '';
         this._createSession();
@@ -407,25 +548,31 @@ class ClankermuxUsageApplet extends Applet.Applet {
         }
     }
 
-    _refresh(forceRunway = false) {
+    _refresh(forceOutlook = false) {
         if (this._refreshing || this._destroyed)
             return;
         this._refreshing = true;
         const generation = ++this._requestGeneration;
-        const fetchRunway = forceRunway || !this._lastRunwayAttempt ||
-            Date.now() - this._lastRunwayAttempt >= RUNWAY_REFRESH_MS;
-        const cycle = this._model.createRefreshCycle(fetchRunway ? 3 : 2);
+        const fetchOutlook = forceOutlook || !this._lastOutlookAttempt ||
+            Date.now() - this._lastOutlookAttempt >= OUTLOOK_REFRESH_MS;
+        const cycle = this._model.createRefreshCycle(fetchOutlook ? 5 : 2);
         const timeoutSeconds = Math.max(2, Number(this.requestTimeout || 8));
         const cancellable = new Gio.Cancellable();
         this._refreshCancellable = cancellable;
         let accountsResult = null;
         let statusResult = null;
         let runwayResult = null;
+        let pacingResult = null;
+        let workloadHeadroomResult = null;
         let accountsError = null;
         let statusError = null;
         let runwayError = null;
+        let pacingError = null;
+        let workloadHeadroomError = null;
         let statusReceivedAt = 0;
         let runwayReceivedAt = 0;
+        let pacingReceivedAt = 0;
+        let workloadHeadroomReceivedAt = 0;
 
         const validate = (data, schema, label, shape) => {
             if (!data || typeof data !== 'object')
@@ -459,12 +606,26 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 'status',
                 data => Boolean(data.pool)
             );
-            if (fetchRunway) {
+            if (fetchOutlook) {
                 runwayError = runwayError || validate(
                     runwayResult,
                     'clankermux.public.runway.v1',
                     'runway',
-                    data => Boolean(data.coverage)
+                    data => Boolean(data.coverage) && Boolean(data.worstStatedOutcome) &&
+                        Object.prototype.hasOwnProperty.call(data.worstStatedOutcome, 'headroomPct') &&
+                        Object.prototype.hasOwnProperty.call(data.worstStatedOutcome, 'headroomDirection')
+                );
+                pacingError = pacingError || validate(
+                    pacingResult,
+                    'clankermux.public.pacing.v1',
+                    'pacing',
+                    data => Array.isArray(data.classes)
+                );
+                workloadHeadroomError = workloadHeadroomError || validate(
+                    workloadHeadroomResult,
+                    'clankermux.public.workload-headroom.v1',
+                    'workload headroom',
+                    data => Array.isArray(data.rows)
                 );
             }
 
@@ -474,13 +635,27 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 this._status = statusResult;
                 this._statusReceivedAt = statusReceivedAt || Date.now();
             }
-            if (fetchRunway) {
+            if (fetchOutlook) {
                 if (!runwayError) {
                     this._runway = runwayResult;
                     this._runwayReceivedAt = runwayReceivedAt || Date.now();
                     this._lastRunwayError = '';
                 } else {
                     this._lastRunwayError = this._errorMessage(runwayError);
+                }
+                if (!pacingError) {
+                    this._pacing = pacingResult;
+                    this._pacingReceivedAt = pacingReceivedAt || Date.now();
+                    this._lastPacingError = '';
+                } else {
+                    this._lastPacingError = this._errorMessage(pacingError);
+                }
+                if (!workloadHeadroomError) {
+                    this._workloadHeadroom = workloadHeadroomResult;
+                    this._workloadHeadroomReceivedAt = workloadHeadroomReceivedAt || Date.now();
+                    this._lastWorkloadHeadroomError = '';
+                } else {
+                    this._lastWorkloadHeadroomError = this._errorMessage(workloadHeadroomError);
                 }
             }
 
@@ -522,12 +697,24 @@ class ClankermuxUsageApplet extends Applet.Applet {
             statusReceivedAt = Date.now();
             complete();
         });
-        if (fetchRunway) {
-            this._lastRunwayAttempt = Date.now();
+        if (fetchOutlook) {
+            this._lastOutlookAttempt = Date.now();
             this._getJson('/public/v1/runway', generation, cancellable, (error, data) => {
                 runwayError = error;
                 runwayResult = data;
                 runwayReceivedAt = Date.now();
+                complete();
+            });
+            this._getJson('/public/v1/pacing', generation, cancellable, (error, data) => {
+                pacingError = error;
+                pacingResult = data;
+                pacingReceivedAt = Date.now();
+                complete();
+            });
+            this._getJson('/public/v1/workload-headroom', generation, cancellable, (error, data) => {
+                workloadHeadroomError = error;
+                workloadHeadroomResult = data;
+                workloadHeadroomReceivedAt = Date.now();
                 complete();
             });
         }
@@ -544,13 +731,22 @@ class ClankermuxUsageApplet extends Applet.Applet {
         if (!this._model || !this.menu)
             return;
         this._polling.ensure();
-        this._view = this._model.buildView(this._accounts, this._status, this._runway, {
-            showScoped: this.showScopedLimits !== false,
-            defaultCandidateFirst: this.defaultCandidateFirst !== false,
-            runwayWarningHours: Number(this.runwayWarningHours || 72),
-            statusReceivedAt: this._statusReceivedAt,
-            runwayReceivedAt: this._runwayReceivedAt,
-        });
+        this._view = this._model.buildView(
+            this._accounts,
+            this._status,
+            this._runway,
+            this._pacing,
+            this._workloadHeadroom,
+            {
+                showScoped: this.showScopedLimits !== false,
+                defaultCandidateFirst: this.defaultCandidateFirst !== false,
+                runwayWarningHours: Number(this.runwayWarningHours || 72),
+                statusReceivedAt: this._statusReceivedAt,
+                runwayReceivedAt: this._runwayReceivedAt,
+                pacingReceivedAt: this._pacingReceivedAt,
+                workloadHeadroomReceivedAt: this._workloadHeadroomReceivedAt,
+            }
+        );
         this._renderPanel();
         if (this.menu.isOpen && this._menuStateSignature() !== this._menuSignature)
             this._requestMenuRebuild();
@@ -558,66 +754,70 @@ class ClankermuxUsageApplet extends Applet.Applet {
 
     _renderPanel() {
         if (!this._accounts) {
-            this._panelRunwayLabel.set_text(this._lastError ? 'Clankermux !' : 'Clankermux …');
-            this._panelRunwayLabel.set_style_class_name(
-                this._lastError ? 'clankermux-panel-error' : 'clankermux-panel-loading'
-            );
+            this._panelPace.visible = true;
+            updatePanelPace(this._panelPace, {
+                action: this._lastError ? 'ERROR' : '…',
+                side: 'none',
+                fillPercent: 0,
+                severity: this._lastError ? 'warning' : 'unknown',
+            }, Math.max(30, Number(this.panelBarWidth || 52)));
             this._panelEmptyLabel.visible = false;
-            for (const meter of this._panelMeters.values())
+            for (const meter of this._panelWorkloads.values())
                 meter.visible = false;
             this.set_applet_tooltip(this._lastError || 'Loading Clankermux usage…');
             return;
         }
 
+        this._panelPace.visible = true;
         const availabilityDegraded = this._view.pool.defaultRoutable < this._view.pool.configured;
         const availabilityMarker = availabilityDegraded
             ? ` · ${this._view.pool.defaultRoutable}/${this._view.pool.configured}!`
             : '';
         const overloadMarker = this._view.providerOverloads.length ? ' ⏳' : '';
-        let runwaySeverity = this._view.runway.severity;
-        if (this._view.pool.defaultRoutable === 0)
-            runwaySeverity = 'critical';
-        else if ((availabilityDegraded || this._view.providerOverloads.length) && runwaySeverity === 'normal')
-            runwaySeverity = 'warning';
-        this._panelRunwayLabel.set_text(
-            `${this._view.runway.panelText}${availabilityMarker}${overloadMarker}`
-        );
-        this._panelRunwayLabel.set_style_class_name(
-            `clankermux-panel-runway ${runwaySeverity}`
-        );
         const barWidth = Math.max(30, Number(this.panelBarWidth || 52));
-        const panelPools = this._model.panelUsagePools(this._view.usagePools);
-        const visibleKeys = new Set(panelPools.map(pool => pool.key));
-        for (const [key, meter] of this._panelMeters)
+        updatePanelPace(this._panelPace, this._view.pace, barWidth);
+        this._panelPace._clankermuxAction.set_text(
+            `${this._view.pace.action}${availabilityMarker}${overloadMarker}`
+        );
+        const visibleKeys = new Set(this._view.workloads.map(workload => workload.key));
+        for (const [key, meter] of this._panelWorkloads)
             meter.visible = visibleKeys.has(key);
-        for (const pool of panelPools) {
-            let meter = this._panelMeters.get(pool.key);
+        for (const workload of this._view.workloads) {
+            let meter = this._panelWorkloads.get(workload.key);
             if (!meter) {
-                meter = createPanelMeter(
-                    pool,
+                meter = createPanelWorkload(
+                    workload,
                     barWidth,
                     this.showPanelPercentages !== false
                 );
-                this._panelMeters.set(pool.key, meter);
+                this._panelWorkloads.set(workload.key, meter);
                 this._panelContent.add_child(meter);
             } else {
-                updatePanelMeter(
+                updatePanelWorkload(
                     meter,
-                    pool,
+                    workload,
                     barWidth,
                     this.showPanelPercentages !== false
                 );
             }
             meter.visible = true;
         }
-        this._panelEmptyLabel.visible = !panelPools.length;
+        this._panelEmptyLabel.set_text(this._lastWorkloadHeadroomError ? 'workloads !' : 'workloads –');
+        this._panelEmptyLabel.visible = !this._view.workloads.length;
 
         const lines = [
+            `Pool pace: ${this._view.pace.valueText} · ${this._view.pace.summary}`,
             `Quota runway: ${this._view.runway.value}`,
             this._view.runway.summary,
             `Coverage: ${this._view.runway.coverageText}`,
             `Availability: ${this._view.pool.defaultRoutable} of ${this._view.pool.configured} accounts in the default routing context`,
         ];
+        for (const workload of this._view.workloads) {
+            const basis = workload.basis === 'bound' ? ' · conservative bound' : '';
+            lines.push(
+                `${workload.label}: ${workload.valueText} · ${workload.summary}${basis} · ${workload.depthText}`
+            );
+        }
         for (const overload of this._view.providerOverloads) {
             const scope = overload.providerWide ? 'provider-wide' : 'provider or model scope';
             const retry = overload.until
@@ -631,11 +831,25 @@ class ClankermuxUsageApplet extends Applet.Applet {
         }
         if (this._lastRunwayError)
             lines.push(`Last runway refresh failed: ${this._lastRunwayError}`);
+        if (this._lastPacingError)
+            lines.push(`Last pacing refresh failed: ${this._lastPacingError}`);
+        if (this._lastWorkloadHeadroomError)
+            lines.push(`Last workload refresh failed: ${this._lastWorkloadHeadroomError}`);
         if (this._lastError)
             lines.push(`Last refresh failed: ${this._lastError}`);
         else if (this._lastSuccess)
-            lines.push(`Updated ${this._model.formatDuration(Date.now() - this._lastSuccess)} ago`);
+            lines.push(`Accounts/status updated ${this._model.formatDuration(Date.now() - this._lastSuccess)} ago`);
         this.set_applet_tooltip(lines.join('\n'));
+    }
+
+    _feedErrorDetails(error, receivedAt) {
+        const details = [error];
+        if (receivedAt) {
+            const timestamp = this._model.formatTimestamp(receivedAt);
+            const age = this._model.formatDuration(Date.now() - receivedAt);
+            details.push(`Last successful fetch: ${timestamp} (${age} ago)`);
+        }
+        return details.join('\n');
     }
 
     _menuStateSignature() {
@@ -679,12 +893,17 @@ class ClankermuxUsageApplet extends Applet.Applet {
             Boolean(this._accounts),
             this._model.normalizeBaseUrl(this.apiUrl),
             view?.pool || null,
+            view?.pace || null,
+            view?.pacing || null,
             view?.runway || null,
+            view?.workloads || null,
             accounts,
             pools,
             overloads,
             this._lastError || '',
             this._lastRunwayError || '',
+            this._lastPacingError || '',
+            this._lastWorkloadHeadroomError || '',
             this._lastSuccess ? 1 : 0,
             this._refreshing ? 1 : 0,
         ]);
@@ -721,6 +940,38 @@ class ClankermuxUsageApplet extends Applet.Applet {
         subtitle += `\n${this._lastRefreshText()}`;
         this.menu.addMenuItem(new InfoMenuItem('Clankermux usage', subtitle));
 
+        this.menu.addMenuItem(new PaceMenuItem(this._view.pace));
+        if (this._lastRunwayError) {
+            this.menu.addMenuItem(new InfoMenuItem(
+                this._runway ? 'Pool pace is cached' : 'Pool pace unavailable',
+                this._feedErrorDetails(this._lastRunwayError, this._runwayReceivedAt),
+                'warning'
+            ));
+        }
+        if (this._view.workloads.length)
+            this.menu.addMenuItem(new WorkloadSummaryMenuItem(this._view.workloads));
+        if (this._lastWorkloadHeadroomError)
+            this.menu.addMenuItem(new InfoMenuItem(
+                this._workloadHeadroom ? 'Workload headroom is cached' : 'Workload headroom unavailable',
+                this._feedErrorDetails(
+                    this._lastWorkloadHeadroomError,
+                    this._workloadHeadroomReceivedAt
+                ),
+                'warning'
+            ));
+        if (this._view.pacing.classes.length)
+            this.menu.addMenuItem(new PacingSummaryMenuItem(
+                this._view.pacing,
+                this._model,
+                this._view.nowMs
+            ));
+        if (this._lastPacingError)
+            this.menu.addMenuItem(new InfoMenuItem(
+                this._pacing ? 'Class pacing is cached' : 'Class pacing unavailable',
+                this._feedErrorDetails(this._lastPacingError, this._pacingReceivedAt),
+                'warning'
+            ));
+
         const runwayDetails = [
             this._view.runway.summary,
             `Coverage: ${this._view.runway.coverageText}`,
@@ -730,8 +981,8 @@ class ClankermuxUsageApplet extends Applet.Applet {
             runwayDetails.push(`Projection updated: ${this._model.formatDuration(this._view.runway.ageMs)} ago`);
         if (this._view.runway.causes.length)
             runwayDetails.push(`Cause: ${this._view.runway.causes.join(' + ')}`);
-        if (this._lastRunwayError)
-            runwayDetails.push(`Last runway refresh failed: ${this._lastRunwayError}`);
+        if (this._view.runway.bandText)
+            runwayDetails.push(`Quantisation band: ${this._view.runway.bandText}`);
         const runwayStyle = this._view.runway.severity === 'critical'
             ? 'error'
             : this._view.runway.severity === 'warning' ? 'warning' : '';
@@ -751,12 +1002,6 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 'overload'
             ));
         }
-        if (this._view.usagePools.length)
-            this.menu.addMenuItem(new PoolSummaryMenuItem(
-                this._view.usagePools,
-                this._model,
-                this._view.nowMs
-            ));
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         for (const account of this._view.accounts)
@@ -771,10 +1016,10 @@ class ClankermuxUsageApplet extends Applet.Applet {
 
     _lastRefreshText() {
         if (!this._lastSuccess)
-            return 'Last refreshed: Never';
+            return 'Accounts/status refreshed: Never';
         const timestamp = this._model.formatTimestamp(this._lastSuccess);
         const age = this._model.formatDuration(Date.now() - this._lastSuccess);
-        return `Last refreshed: ${timestamp} (${age} ago)`;
+        return `Accounts/status refreshed: ${timestamp} (${age} ago)`;
     }
 
     _addMenuActions() {

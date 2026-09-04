@@ -25,12 +25,12 @@
     "panel-section": {
       "type": "section",
       "title": "Panel",
-      "keys": ["panel-bar-width", "show-panel-percentages", "runway-warning-hours"]
+      "keys": ["panel-bar-width", "show-panel-percentages"]
     },
     "details-section": {
       "type": "section",
       "title": "Popup",
-      "keys": ["show-scoped-limits", "default-candidate-first"]
+      "keys": ["show-scoped-limits", "default-candidate-first", "runway-warning-hours"]
     }
   },
   "api-url": {
@@ -41,7 +41,7 @@
   },
   "connection-note": {
     "type": "label",
-    "description": "The applet reads Clankermux's unauthenticated, read-only /public/v1 status, accounts, and runway endpoints. Enter a complete HTTP or HTTPS URL above; hostnames and IP addresses are both supported."
+    "description": "The applet reads Clankermux's unauthenticated, read-only /public/v1 status, accounts, runway, pacing, and workload-headroom endpoints. Enter a complete HTTP or HTTPS URL above; hostnames and IP addresses are both supported."
   },
   "refresh-interval": {
     "type": "spinbutton",
@@ -68,12 +68,12 @@
     "max": 100,
     "step": 2,
     "units": "pixels",
-    "description": "Width of each panel progress bar"
+    "description": "Width of each panel pace bar"
   },
   "show-panel-percentages": {
     "type": "switch",
-    "default": true,
-    "description": "Show percentages beside panel bars"
+    "default": false,
+    "description": "Show exact headroom beside workload bars"
   },
   "runway-warning-hours": {
     "type": "spinbutton",
@@ -82,13 +82,13 @@
     "max": 336,
     "step": 1,
     "units": "hours",
-    "description": "Warn when quota runway falls below",
-    "tooltip": "The panel runway turns orange below this duration. It turns red when the pool is out of quota."
+    "description": "Warn in the popup when quota runway falls below",
+    "tooltip": "This affects the secondary runway detail. The panel headline follows pace headroom instead."
   },
   "show-scoped-limits": {
     "type": "switch",
     "default": true,
-    "description": "Show model-specific limits in the panel and popup"
+    "description": "Show model-family headroom and limits in the panel and popup"
   },
   "default-candidate-first": {
     "type": "switch",

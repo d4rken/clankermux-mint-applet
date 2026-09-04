@@ -120,18 +120,6 @@ test('can suppress provider-scoped pool aggregates', () => {
     assert.deepEqual(model.usagePools(fixtures.status(), false).map(pool => pool.label), ['5h', '7d']);
 });
 
-test('hides unused scoped families only in the compact panel', () => {
-    const pools = [
-        { key: 'five_hour', scoped: false, usedPercent: 0 },
-        { key: 'scope:anthropic:spark', scoped: true, usedPercent: 0 },
-        { key: 'scope:anthropic:fable', scoped: true, usedPercent: 1 },
-    ];
-    assert.deepEqual(model.panelUsagePools(pools).map(pool => pool.key), [
-        'five_hour',
-        'scope:anthropic:fable',
-    ]);
-});
-
 test('recognizes open and half-open provider overload breakers', () => {
     const current = fixtures.status();
     current.providers[0].anyOverload = {
@@ -155,6 +143,7 @@ test('recognizes open and half-open provider overload breakers', () => {
 test('builds the public-v1 view and prioritizes the default candidate', () => {
     const view = model.buildView(
         fixtures.accounts(), fixtures.status(), fixtures.runway(),
+        fixtures.pacing(), fixtures.workloadHeadroom(),
         { statusReceivedAt: NOW, runwayReceivedAt: NOW }, NOW
     );
 
@@ -162,6 +151,179 @@ test('builds the public-v1 view and prioritizes the default candidate', () => {
     assert.equal(view.accounts[0].defaultCandidate, true);
     assert.deepEqual([view.pool.defaultRoutable, view.pool.configured], [2, 3]);
     assert.deepEqual(view.usagePools.map(pool => pool.usedPercent), [38, 50, 70]);
+    assert.equal(view.pace.action, 'CUT');
+    assert.deepEqual(view.workloads.map(row => row.label), ['Claude', 'GPT', 'Fable']);
+    assert.equal(view.pacing.classes[1].fiveHour.summary, '5-hour usage is not reported');
+});
+
+test('maps signed pool headroom onto a centered pace signal', () => {
+    const margin = fixtures.runway({
+        worstStatedOutcome: {
+            kind: 'beyond_horizon', exhaustsAt: null, causes: [],
+            headroomPct: 31, headroomDirection: 'margin',
+        },
+    });
+    const room = model.paceView(margin, NOW, NOW);
+    assert.deepEqual(
+        [room.action, room.valueText, room.side, room.fillPercent, room.severity],
+        ['ROOM', '+31%', 'right', 62, 'normal']
+    );
+
+    const cut = model.paceView(fixtures.runway(), NOW, NOW);
+    assert.deepEqual(
+        [cut.action, cut.valueText, cut.side, cut.fillPercent, cut.severity],
+        ['CUT', '−18%', 'left', 36, 'warning']
+    );
+});
+
+test('reads null pool headroom from the outcome kind instead of treating it as zero', () => {
+    const cases = [
+        ['beyond_horizon', 'PLENTY', 'right', 100, 'normal'],
+        ['runway', 'CUT HARD', 'left', 100, 'warning'],
+        ['out_now', 'OUT', 'left', 100, 'critical'],
+        ['unknown', 'NO READING', 'none', 0, 'unknown'],
+        ['no_accounts', 'NO READING', 'none', 0, 'unknown'],
+        ['other', 'NO READING', 'none', 0, 'unknown'],
+    ];
+    for (const [kind, action, side, fillPercent, severity] of cases) {
+        const pace = model.paceView(fixtures.runway({
+            worstStatedOutcome: {
+                kind, exhaustsAt: null, causes: [],
+                headroomPct: null, headroomDirection: null,
+            },
+        }), NOW, NOW);
+        assert.deepEqual(
+            [pace.action, pace.side, pace.fillPercent, pace.severity],
+            [action, side, fillPercent, severity]
+        );
+    }
+});
+
+test('does not infer pace when an older runway payload lacks headroom fields', () => {
+    const response = fixtures.runway();
+    delete response.worstStatedOutcome.headroomPct;
+    delete response.worstStatedOutcome.headroomDirection;
+
+    const pace = model.paceView(response, NOW, NOW);
+    assert.equal(pace.action, 'NO READING');
+    assert.equal(pace.side, 'none');
+});
+
+test('describes an absent runway resource as unavailable', () => {
+    const pace = model.paceView(null, NOW, NOW);
+    const runway = model.runwayView(null, [], 72, NOW, NOW);
+
+    assert.equal(pace.action, 'NO READING');
+    assert.equal(pace.coverageText, 'Runway unavailable');
+    assert.equal(pace.available, false);
+    assert.equal(runway.summary, 'Quota runway is unavailable');
+    assert.equal(runway.coverageText, 'Runway unavailable');
+});
+
+test('qualifies incomplete pool headroom without changing its direction', () => {
+    const pace = model.paceView(fixtures.runway({
+        coverage: { activeKeyCount: 3, statedKeyCount: 2, unobservedKeyCount: 1 },
+        worstStatedOutcome: {
+            kind: 'beyond_horizon', exhaustsAt: null, causes: [],
+            headroomPct: 20, headroomDirection: 'margin',
+        },
+    }), NOW, NOW);
+    assert.equal(pace.action, 'ROOM*');
+    assert.equal(pace.side, 'right');
+    assert.equal(pace.incomplete, true);
+});
+
+test('maps exact classes and conservative family bounds without conflating them', () => {
+    const rows = model.workloadHeadroomView(fixtures.workloadHeadroom(), NOW, NOW).rows;
+    assert.deepEqual(
+        rows.map(row => [row.label, row.valueText, row.basis, row.incomplete]),
+        [
+            ['Claude', '+30%', 'exact', false],
+            ['GPT', '+41%', 'exact', false],
+            ['Fable', '≥+30%', 'bound', true],
+        ]
+    );
+    assert.equal(rows[2].depthText, '1 of 2 spent · 1 unreadable');
+    assert.equal(rows[2].projectionLabel, 'Structural projection');
+});
+
+test('describes a family deficit as a safe cut rather than an exact threshold', () => {
+    const response = fixtures.workloadHeadroom({
+        rows: [{
+            dimensionKind: 'family', dimensionId: 'fable', label: 'Fable',
+            outcomeKind: 'runway', exhaustsAt: '2026-08-25T00:00:00.000Z',
+            headroomPct: 40, headroomDirection: 'deficit',
+            headroomBasis: 'conservative_bound', headroomAbsence: null,
+            projectionBasis: 'measured', eligibleAccounts: 2,
+            unreadableAccounts: 0, spentAccounts: 0,
+        }],
+    });
+    const [row] = model.workloadHeadroomView(response, NOW, NOW).rows;
+    assert.equal(row.valueText, '−40% safe');
+    assert.match(row.summary, /conservative cut/);
+});
+
+test('renders every workload headroom absence explicitly', () => {
+    const base = {
+        dimensionKind: 'family', dimensionId: 'fable', label: 'Fable',
+        headroomPct: null, headroomDirection: null,
+        headroomBasis: 'conservative_bound', projectionBasis: 'structural',
+        eligibleAccounts: 2, unreadableAccounts: 0, spentAccounts: 0,
+    };
+    const cases = [
+        [{ outcomeKind: 'beyond_horizon', headroomAbsence: 'beyond_probe_range' }, 'PLENTY'],
+        [{ outcomeKind: 'runway', headroomAbsence: 'beyond_probe_range' }, 'NO SAFE CUT'],
+        [{ outcomeKind: 'runway', headroomAbsence: 'bound_broken_by_credits' }, 'NO BOUND'],
+        [{ outcomeKind: 'unknown', headroomAbsence: 'not_projected' }, 'NO READING'],
+        [{ outcomeKind: 'beyond_horizon', headroomAbsence: 'other' }, 'NO READING'],
+    ];
+    for (const [fields, expected] of cases) {
+        const response = fixtures.workloadHeadroom({ rows: [{ ...base, ...fields }] });
+        assert.equal(model.workloadHeadroomView(response, NOW, NOW).rows[0].action, expected);
+    }
+});
+
+test('fails closed when a workload headroom basis is unknown', () => {
+    const response = fixtures.workloadHeadroom({
+        rows: [{
+            dimensionKind: 'family', dimensionId: 'fable', label: 'Fable',
+            outcomeKind: 'beyond_horizon', exhaustsAt: null,
+            headroomPct: 30, headroomDirection: 'margin',
+            headroomBasis: 'other', headroomAbsence: null,
+            projectionBasis: 'measured', eligibleAccounts: 2,
+            unreadableAccounts: 0, spentAccounts: 0,
+        }],
+    });
+    const [row] = model.workloadHeadroomView(response, NOW, NOW).rows;
+
+    assert.equal(row.action, 'NO READING');
+    assert.equal(row.valueText, '–');
+    assert.equal(row.basisLabel, 'Unknown basis');
+});
+
+test('uses server pacing tones and preserves absent burn and five-hour readings', () => {
+    const view = model.pacingView(fixtures.pacing(), fixtures.accounts(), NOW, NOW);
+    assert.equal(view.bindingClassId, 'codex');
+    assert.deepEqual(
+        view.classes.map(item => [item.label, item.binding, item.severity, item.burnText]),
+        [
+            ['Claude', false, 'normal', '1.08× sustainable pace'],
+            ['GPT', true, 'warning', 'Pace not stated'],
+        ]
+    );
+    assert.equal(view.classes[0].leastUsedAccountName, 'Account A');
+    assert.equal(view.classes[1].fiveHour.unread, true);
+    assert.equal(view.classes[1].fiveHour.summary, '5-hour usage is not reported');
+    assert.equal(view.classes[1].fiveHour.severity, 'unknown');
+});
+
+test('keeps the pool five-hour tone separate from unread class measurements', () => {
+    const response = fixtures.pacing({ fiveHourOutlookTone: 'destructive' });
+    const view = model.pacingView(response, fixtures.accounts(), NOW, NOW);
+
+    assert.equal(view.fiveHourSeverity, 'critical');
+    assert.equal(view.classes[1].fiveHour.unread, true);
+    assert.equal(view.classes[1].fiveHour.severity, 'unknown');
 });
 
 test('finite runway becomes the compact panel headline and resolves its cause', () => {
@@ -169,7 +331,6 @@ test('finite runway becomes the compact panel headline and resolves its cause', 
         { id: 'account-c', name: 'Account C' },
     ], 72, NOW, NOW);
 
-    assert.equal(view.panelText, 'R 4d');
     assert.equal(view.value, '4d');
     assert.equal(view.severity, 'normal');
     assert.equal(view.coverageText, '2 of 2 active keys observed');
@@ -188,6 +349,18 @@ test('runway warning threshold is expressed in hours', () => {
     assert.equal(model.runwayView(response, [], 24, NOW, NOW).severity, 'normal');
 });
 
+test('omits a runway quantisation band when both endpoints are equal', () => {
+    const instant = new Date(NOW + 4 * 24 * 60 * 60 * 1000).toISOString();
+    const response = fixtures.runway({
+        worstStatedOutcome: {
+            kind: 'runway', exhaustsAt: instant, causes: [],
+            earliestExhaustsAt: instant, latestExhaustsAt: instant,
+        },
+    });
+
+    assert.equal(model.runwayView(response, [], 72, NOW, NOW).bandText, '');
+});
+
 test('incomplete runway coverage is visibly qualified', () => {
     const response = fixtures.runway({
         coverage: { activeKeyCount: 3, statedKeyCount: 2, unobservedKeyCount: 1 },
@@ -195,25 +368,24 @@ test('incomplete runway coverage is visibly qualified', () => {
     });
     const view = model.runwayView(response, [], 72, NOW, NOW);
 
-    assert.equal(view.panelText, 'R >14d*');
     assert.equal(view.severity, 'warning');
     assert.match(view.coverageText, /1 unobserved/);
 });
 
 test('renders every non-finite runway outcome honestly', () => {
     const cases = [
-        ['out_now', 'R OUT', 'critical'],
-        ['beyond_horizon', 'R >14d', 'normal'],
-        ['unknown', 'R –', 'warning'],
-        ['no_accounts', 'R –', 'critical'],
-        ['other', 'R ?', 'warning'],
+        ['out_now', 'OUT', 'critical'],
+        ['beyond_horizon', '>14d', 'normal'],
+        ['unknown', '–', 'warning'],
+        ['no_accounts', '–', 'critical'],
+        ['other', '?', 'warning'],
     ];
-    for (const [kind, panelText, severity] of cases) {
+    for (const [kind, value, severity] of cases) {
         const response = fixtures.runway({
             worstStatedOutcome: { kind, exhaustsAt: null, causes: [] },
         });
         const view = model.runwayView(response, [], 72, NOW, NOW);
-        assert.deepEqual([view.panelText, view.severity], [panelText, severity]);
+        assert.deepEqual([view.value, view.severity], [value, severity]);
     }
 });
 
