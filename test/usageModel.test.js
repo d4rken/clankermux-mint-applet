@@ -301,7 +301,7 @@ test('fails closed when a workload headroom basis is unknown', () => {
     assert.equal(row.basisLabel, 'Unknown basis');
 });
 
-test('keeps ordinary workload words off the compact panel', () => {
+test('keeps workload state words off the compact panel', () => {
     const rows = model.workloadHeadroomView(fixtures.workloadHeadroom(), NOW, NOW).rows;
     assert.equal(model.panelWorkloadLabel(rows[0]), '');
     assert.equal(model.panelWorkloadLabel(rows[0], true), '+30%');
@@ -330,14 +330,17 @@ test('keeps ordinary workload words off the compact panel', () => {
         }],
     });
     const [exceptional] = model.workloadHeadroomView(response, NOW, NOW).rows;
-    assert.equal(model.panelWorkloadLabel(exceptional), 'NO SAFE CUT');
-    assert.equal(model.panelWorkloadLabel(exceptional, true), 'NO SAFE CUT');
+    assert.equal(exceptional.barStyle, 'uncertain');
+    assert.equal(exceptional.side, 'left');
+    assert.equal(exceptional.fillPercent, 100);
+    assert.equal(model.panelWorkloadLabel(exceptional), '');
+    assert.equal(model.panelWorkloadLabel(exceptional, true), '');
     assert.equal(model.panelWorkloadLabel({
         action: 'NO BOUND', valueText: '–', percent: null, direction: null,
-    }, true), 'NO BOUND');
+    }, true), '');
     assert.equal(model.panelWorkloadLabel({
         action: 'NO READING', valueText: '–', percent: null, direction: null,
-    }, true), 'NO READING');
+    }, true), '');
 });
 
 test('uses server pacing tones and preserves absent burn and five-hour readings', () => {

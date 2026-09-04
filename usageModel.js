@@ -401,7 +401,7 @@ var UsageModel = (() => {
             if (basis === 'bound') {
                 return {
                     action: 'NO SAFE CUT', valueText: 'NO SAFE CUT', side: 'left', fillPercent: 100,
-                    severity: 'warning', percent: null, direction: null,
+                    severity: 'warning', barStyle: 'uncertain', percent: null, direction: null,
                     summary: 'No cut up to the probe floor can be certified without burn attribution',
                 };
             }
@@ -542,9 +542,7 @@ var UsageModel = (() => {
     function panelWorkloadLabel(signal, showPercentage = false) {
         const numericDirection = signal?.percent !== null && signal?.percent !== undefined &&
             (signal.direction === 'margin' || signal.direction === 'deficit');
-        if (numericDirection)
-            return showPercentage ? String(signal.valueText || '') : '';
-        return String(signal?.action || 'NO READING');
+        return showPercentage && numericDirection ? String(signal.valueText || '') : '';
     }
 
     function _accountName(accountId, accounts) {

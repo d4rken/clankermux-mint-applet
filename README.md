@@ -10,7 +10,7 @@ The panel shows separate headroom signals for each servable class and model
 family. For example:
 
 ```text
-Claude [ cut | add ]  GPT [ cut | add ]  Fable B* [ cut | add ] NO SAFE CUT
+Claude [ cut | add ]  GPT [ cut | add ]  Fable B* [ outlined cut | add ] 2/5 spent
 ```
 
 When availability is degraded, the default-context account count appears as an
@@ -25,9 +25,11 @@ without claiming the remaining pool is out.
 
 Exact percentages are hidden in the panel by default because counterfactual pace
 moves as recent burn changes. They remain in the tooltip and popup, and can be
-enabled in settings. Ordinary `ROOM` and `CUT` words are omitted because the bar
-already carries their direction. Exceptional states such as `NO SAFE CUT`, `OUT`,
-and `NO READING` remain visible. Pool-wide pace stays in the tooltip and popup.
+enabled in settings. The panel adds no state words because the graph already
+carries their direction. Solid fill means a stated magnitude or a definite
+scale-end result. An outlined amber left half means reduction is indicated but
+its magnitude cannot be certified.
+Exact state text and pool-wide pace stay in the tooltip and popup.
 Click the applet for:
 
 - exact pool and per-workload pace headroom, including bound and evidence qualifiers

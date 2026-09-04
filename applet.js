@@ -69,7 +69,7 @@ function updatePaceTrack(track, signal, width) {
     track._clankermuxRight.set_width(halfWidth);
     track._clankermuxLeftFill.set_width(signal.side === 'left' ? fillWidth : 0);
     track._clankermuxRightFill.set_width(signal.side === 'right' ? fillWidth : 0);
-    const style = `clankermux-pace-fill ${signal.severity}`;
+    const style = `clankermux-pace-fill ${signal.severity} ${signal.barStyle || 'solid'}`;
     track._clankermuxLeftFill.set_style_class_name(style);
     track._clankermuxRightFill.set_style_class_name(style);
 }
