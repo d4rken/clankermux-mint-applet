@@ -330,9 +330,9 @@ test('keeps workload state words off the compact panel', () => {
         }],
     });
     const [exceptional] = model.workloadHeadroomView(response, NOW, NOW).rows;
-    assert.equal(exceptional.barStyle, 'uncertain');
     assert.equal(exceptional.side, 'left');
     assert.equal(exceptional.fillPercent, 100);
+    assert.match(exceptional.summary, /50% probe range/);
     assert.equal(model.panelWorkloadLabel(exceptional), '');
     assert.equal(model.panelWorkloadLabel(exceptional, true), '');
     assert.equal(model.panelWorkloadLabel({

@@ -213,11 +213,6 @@
     background-color: #888888;
 }
 
-.clankermux-pace-fill.uncertain {
-    background-color: rgba(229, 185, 92, 0.18);
-    border: 1px solid #e5b95c;
-}
-
 .clankermux-bound-badge {
     color: #d6b56c;
     font-size: 0.62em;

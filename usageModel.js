@@ -401,8 +401,8 @@ var UsageModel = (() => {
             if (basis === 'bound') {
                 return {
                     action: 'NO SAFE CUT', valueText: 'NO SAFE CUT', side: 'left', fillPercent: 100,
-                    severity: 'warning', barStyle: 'uncertain', percent: null, direction: null,
-                    summary: 'No cut up to the probe floor can be certified without burn attribution',
+                    severity: 'warning', percent: null, direction: null,
+                    summary: 'No workload reduction within the 50% probe range cleared the model horizon',
                 };
             }
             return {

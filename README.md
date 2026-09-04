@@ -10,7 +10,7 @@ The panel shows separate headroom signals for each servable class and model
 family. For example:
 
 ```text
-Claude [ cut | add ]  GPT [ cut | add ]  Fable B* [ outlined cut | add ] 2/5 spent
+Claude [ cut | add ]  GPT [ cut | add ]  Fable B* [ cut | add ] 2/5 spent
 ```
 
 When availability is degraded, the default-context account count appears as an
@@ -26,9 +26,9 @@ without claiming the remaining pool is out.
 Exact percentages are hidden in the panel by default because counterfactual pace
 moves as recent burn changes. They remain in the tooltip and popup, and can be
 enabled in settings. The panel adds no state words because the graph already
-carries their direction. Solid fill means a stated magnitude or a definite
-scale-end result. An outlined amber left half means reduction is indicated but
-its magnitude cannot be certified.
+carries their direction. Proportional fill shows a stated magnitude. Full-scale
+fill marks a definite scale-end result, including a reduction beyond the 50%
+probe range.
 Exact state text and pool-wide pace stay in the tooltip and popup.
 Click the applet for:
 
@@ -49,8 +49,9 @@ including open and half-open recovery states.
 
 The exact class headroom is a threshold. Family headroom is a conservative
 bound because Clankermux cannot isolate a family's share of account-wide burn.
-Null is never zero: depending on the outcome it can mean robust beyond the probe
-range, no certifiable cut, or no reading. The popup states those cases directly.
+Null is never zero: depending on the outcome it can mean robust beyond the
+positive probe range, a required reduction beyond the 50% probe range, or no
+reading. The popup states those cases directly.
 
 Usage bars turn orange at 80% and red at 100%. Individual forecast confidence
 remains visible in the clicked details; low-confidence exhaustion is never
