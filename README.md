@@ -10,7 +10,7 @@ The panel shows separate headroom signals for each servable class and model
 family. For example:
 
 ```text
-Claude [ cut | add ]  GPT [ cut | add ]  Fable B* [ cut | add ] 2/5 spent
+Claude [ cut | add ]  GPT [ cut | add ]  Fable B* [ cut | add ]
 ```
 
 When availability is degraded, the default-context account count appears as an
@@ -20,8 +20,8 @@ also includes pauses, cooldowns, credentials, and provider overloads.
 
 Rightward bars mean room for more measured load. Leftward bars mean load must be
 cut. `B` marks a conservative family bound rather than an exact threshold, and
-`*` marks incomplete evidence. A spent-account count shows lost failover depth
-without claiming the remaining pool is out.
+`*` marks incomplete evidence. Account depth, including spent and unreadable
+accounts, stays in the tooltip and popup instead of consuming panel space.
 
 Exact percentages are hidden in the panel by default because counterfactual pace
 moves as recent burn changes. They remain in the tooltip and popup, and can be

@@ -132,11 +132,6 @@ function createPanelWorkload(row, width, displayValue) {
     meter.add_child(meter._clankermuxTrack);
     meter._clankermuxValue = new St.Label({ y_align: Clutter.ActorAlign.CENTER });
     meter.add_child(meter._clankermuxValue);
-    meter._clankermuxDepth = new St.Label({
-        style_class: 'clankermux-panel-depth',
-        y_align: Clutter.ActorAlign.CENTER,
-    });
-    meter.add_child(meter._clankermuxDepth);
     updatePanelWorkload(meter, row, width, displayValue);
     return meter;
 }
@@ -149,10 +144,6 @@ function updatePanelWorkload(meter, row, width, displayValue) {
     meter._clankermuxValue.set_text(displayValue);
     meter._clankermuxValue.set_style_class_name(`clankermux-panel-pace-value ${row.severity}`);
     meter._clankermuxValue.visible = Boolean(displayValue);
-    meter._clankermuxDepth.set_text(
-        row.spentAccounts ? `${row.spentAccounts}/${row.eligibleAccounts} spent` : ''
-    );
-    meter._clankermuxDepth.visible = row.spentAccounts > 0;
 }
 
 class PaceMenuItem extends PopupMenu.PopupBaseMenuItem {
