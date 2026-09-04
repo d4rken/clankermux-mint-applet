@@ -130,24 +130,22 @@
     width: 75px;
 }
 
-.clankermux-panel-content {
+.clankermux-panel-content,
+.clankermux-panel-workloads {
     spacing: 8px;
 }
 
-.clankermux-panel-pace,
 .clankermux-panel-workload,
 .clankermux-pace-summary-heading,
 .clankermux-workload-row {
     spacing: 4px;
 }
 
-.clankermux-panel-pace-label,
 .clankermux-panel-workload-label {
     font-size: 0.88em;
     font-weight: bold;
 }
 
-.clankermux-panel-pace-action,
 .clankermux-panel-pace-value,
 .clankermux-workload-value,
 .clankermux-pace-summary-value {
@@ -155,7 +153,6 @@
     font-weight: bold;
 }
 
-.clankermux-panel-pace-action.warning,
 .clankermux-panel-pace-value.warning,
 .clankermux-workload-value.warning,
 .clankermux-pace-summary-value.warning,
@@ -164,7 +161,6 @@
     color: #e5b95c;
 }
 
-.clankermux-panel-pace-action.critical,
 .clankermux-panel-pace-value.critical,
 .clankermux-workload-value.critical,
 .clankermux-pace-summary-value.critical,
@@ -173,7 +169,6 @@
     color: #ef7777;
 }
 
-.clankermux-panel-pace-action.unknown,
 .clankermux-panel-pace-value.unknown,
 .clankermux-workload-value.unknown,
 .clankermux-pace-summary-value.unknown,
@@ -230,6 +225,12 @@
 .clankermux-panel-depth {
     color: #e5b95c;
     font-size: 0.75em;
+}
+
+.clankermux-panel-status {
+    color: #e5b95c;
+    font-size: 0.8em;
+    font-weight: bold;
 }
 
 .clankermux-pace-summary,

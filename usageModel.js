@@ -539,6 +539,14 @@ var UsageModel = (() => {
         };
     }
 
+    function panelWorkloadLabel(signal, showPercentage = false) {
+        const numericDirection = signal?.percent !== null && signal?.percent !== undefined &&
+            (signal.direction === 'margin' || signal.direction === 'deficit');
+        if (numericDirection)
+            return showPercentage ? String(signal.valueText || '') : '';
+        return String(signal?.action || 'NO READING');
+    }
+
     function _accountName(accountId, accounts) {
         if (!accountId)
             return null;
@@ -850,6 +858,7 @@ var UsageModel = (() => {
         humanizeStatus,
         measurementNotice,
         normalizeBaseUrl,
+        panelWorkloadLabel,
         paceView,
         pacingView,
         providerOverloads,

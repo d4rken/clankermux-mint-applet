@@ -301,6 +301,45 @@ test('fails closed when a workload headroom basis is unknown', () => {
     assert.equal(row.basisLabel, 'Unknown basis');
 });
 
+test('keeps ordinary workload words off the compact panel', () => {
+    const rows = model.workloadHeadroomView(fixtures.workloadHeadroom(), NOW, NOW).rows;
+    assert.equal(model.panelWorkloadLabel(rows[0]), '');
+    assert.equal(model.panelWorkloadLabel(rows[0], true), '+30%');
+
+    const deficitResponse = fixtures.workloadHeadroom({
+        rows: [{
+            dimensionKind: 'class', dimensionId: 'anthropic', label: 'Claude',
+            outcomeKind: 'runway', exhaustsAt: '2026-08-25T00:00:00.000Z',
+            headroomPct: 20, headroomDirection: 'deficit',
+            headroomBasis: 'exact', headroomAbsence: null,
+            projectionBasis: 'measured', eligibleAccounts: 2,
+            unreadableAccounts: 0, spentAccounts: 0,
+        }],
+    });
+    const [deficit] = model.workloadHeadroomView(deficitResponse, NOW, NOW).rows;
+    assert.equal(model.panelWorkloadLabel(deficit), '');
+
+    const response = fixtures.workloadHeadroom({
+        rows: [{
+            dimensionKind: 'family', dimensionId: 'fable', label: 'Fable',
+            outcomeKind: 'runway', exhaustsAt: null,
+            headroomPct: null, headroomDirection: null,
+            headroomBasis: 'conservative_bound', headroomAbsence: 'beyond_probe_range',
+            projectionBasis: 'structural', eligibleAccounts: 2,
+            unreadableAccounts: 0, spentAccounts: 0,
+        }],
+    });
+    const [exceptional] = model.workloadHeadroomView(response, NOW, NOW).rows;
+    assert.equal(model.panelWorkloadLabel(exceptional), 'NO SAFE CUT');
+    assert.equal(model.panelWorkloadLabel(exceptional, true), 'NO SAFE CUT');
+    assert.equal(model.panelWorkloadLabel({
+        action: 'NO BOUND', valueText: '–', percent: null, direction: null,
+    }, true), 'NO BOUND');
+    assert.equal(model.panelWorkloadLabel({
+        action: 'NO READING', valueText: '–', percent: null, direction: null,
+    }, true), 'NO READING');
+});
+
 test('uses server pacing tones and preserves absent burn and five-hour readings', () => {
     const view = model.pacingView(fixtures.pacing(), fixtures.accounts(), NOW, NOW);
     assert.equal(view.bindingClassId, 'codex');

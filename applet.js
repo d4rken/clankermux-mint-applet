@@ -115,29 +115,7 @@ function createUsageBar(window, model, nowMs) {
     return row;
 }
 
-function createPanelPace(signal, width) {
-    const meter = new St.BoxLayout({ style_class: 'clankermux-panel-pace' });
-    meter._clankermuxLabel = new St.Label({
-        text: 'PACE',
-        style_class: 'clankermux-panel-pace-label',
-        y_align: Clutter.ActorAlign.CENTER,
-    });
-    meter.add_child(meter._clankermuxLabel);
-    meter._clankermuxTrack = createPaceTrack(signal, width, 'clankermux-panel-pace-track');
-    meter.add_child(meter._clankermuxTrack);
-    meter._clankermuxAction = new St.Label({ y_align: Clutter.ActorAlign.CENTER });
-    meter.add_child(meter._clankermuxAction);
-    updatePanelPace(meter, signal, width);
-    return meter;
-}
-
-function updatePanelPace(meter, signal, width) {
-    updatePaceTrack(meter._clankermuxTrack, signal, width);
-    meter._clankermuxAction.set_text(signal.action);
-    meter._clankermuxAction.set_style_class_name(`clankermux-panel-pace-action ${signal.severity}`);
-}
-
-function createPanelWorkload(row, width, showValues) {
+function createPanelWorkload(row, width, displayValue) {
     const meter = new St.BoxLayout({ style_class: 'clankermux-panel-workload' });
     meter._clankermuxLabel = new St.Label({
         style_class: 'clankermux-panel-workload-label',
@@ -159,17 +137,18 @@ function createPanelWorkload(row, width, showValues) {
         y_align: Clutter.ActorAlign.CENTER,
     });
     meter.add_child(meter._clankermuxDepth);
-    updatePanelWorkload(meter, row, width, showValues);
+    updatePanelWorkload(meter, row, width, displayValue);
     return meter;
 }
 
-function updatePanelWorkload(meter, row, width, showValues) {
+function updatePanelWorkload(meter, row, width, displayValue) {
     meter._clankermuxLabel.set_text(`${row.label}${row.incomplete ? '*' : ''}`);
     meter._clankermuxBasis.set_text(row.basis === 'bound' ? 'B' : '?');
     meter._clankermuxBasis.visible = row.basis !== 'exact';
     updatePaceTrack(meter._clankermuxTrack, row, width);
-    meter._clankermuxValue.set_text(showValues ? row.valueText : row.action);
+    meter._clankermuxValue.set_text(displayValue);
     meter._clankermuxValue.set_style_class_name(`clankermux-panel-pace-value ${row.severity}`);
+    meter._clankermuxValue.visible = Boolean(displayValue);
     meter._clankermuxDepth.set_text(row.spentAccounts ? `${row.spentAccounts} spent` : '');
     meter._clankermuxDepth.visible = row.spentAccounts > 0;
 }
@@ -379,18 +358,21 @@ class ClankermuxUsageApplet extends Applet.Applet {
 
         this.setAllowedLayout(Applet.AllowedLayout.HORIZONTAL);
         this._panelContent = new St.BoxLayout({ style_class: 'clankermux-panel-content' });
-        this._panelPace = createPanelPace({
-            action: '…', side: 'none', fillPercent: 0, severity: 'unknown',
-        }, 52);
+        this._panelWorkloadBox = new St.BoxLayout({ style_class: 'clankermux-panel-workloads' });
         this._panelEmptyLabel = new St.Label({
-            text: 'quota –',
+            text: 'workloads …',
             style_class: 'clankermux-panel-loading',
             y_align: Clutter.ActorAlign.CENTER,
         });
-        this._panelEmptyLabel.visible = false;
+        this._panelStatusLabel = new St.Label({
+            style_class: 'clankermux-panel-status',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._panelStatusLabel.visible = false;
         this._panelWorkloads = new Map();
-        this._panelContent.add_child(this._panelPace);
+        this._panelContent.add_child(this._panelWorkloadBox);
         this._panelContent.add_child(this._panelEmptyLabel);
+        this._panelContent.add_child(this._panelStatusLabel);
         this.actor.add(this._panelContent, { y_align: St.Align.MIDDLE, y_fill: false });
         this.set_applet_tooltip('Loading Clankermux usage…');
 
@@ -754,50 +736,47 @@ class ClankermuxUsageApplet extends Applet.Applet {
 
     _renderPanel() {
         if (!this._accounts) {
-            this._panelPace.visible = true;
-            updatePanelPace(this._panelPace, {
-                action: this._lastError ? 'ERROR' : '…',
-                side: 'none',
-                fillPercent: 0,
-                severity: this._lastError ? 'warning' : 'unknown',
-            }, Math.max(30, Number(this.panelBarWidth || 52)));
-            this._panelEmptyLabel.visible = false;
+            this._panelEmptyLabel.set_text(this._lastError ? 'workloads !' : 'workloads …');
+            this._panelEmptyLabel.visible = true;
+            this._panelStatusLabel.visible = false;
             for (const meter of this._panelWorkloads.values())
                 meter.visible = false;
             this.set_applet_tooltip(this._lastError || 'Loading Clankermux usage…');
             return;
         }
 
-        this._panelPace.visible = true;
         const availabilityDegraded = this._view.pool.defaultRoutable < this._view.pool.configured;
-        const availabilityMarker = availabilityDegraded
-            ? ` · ${this._view.pool.defaultRoutable}/${this._view.pool.configured}!`
-            : '';
-        const overloadMarker = this._view.providerOverloads.length ? ' ⏳' : '';
+        const statusParts = [];
+        if (availabilityDegraded)
+            statusParts.push(`${this._view.pool.defaultRoutable}/${this._view.pool.configured}!`);
+        if (this._view.providerOverloads.length)
+            statusParts.push('⏳');
+        this._panelStatusLabel.set_text(statusParts.join(' '));
+        this._panelStatusLabel.visible = statusParts.length > 0;
         const barWidth = Math.max(30, Number(this.panelBarWidth || 52));
-        updatePanelPace(this._panelPace, this._view.pace, barWidth);
-        this._panelPace._clankermuxAction.set_text(
-            `${this._view.pace.action}${availabilityMarker}${overloadMarker}`
-        );
         const visibleKeys = new Set(this._view.workloads.map(workload => workload.key));
         for (const [key, meter] of this._panelWorkloads)
             meter.visible = visibleKeys.has(key);
         for (const workload of this._view.workloads) {
+            const displayValue = this._model.panelWorkloadLabel(
+                workload,
+                this.showPanelPercentages === true
+            );
             let meter = this._panelWorkloads.get(workload.key);
             if (!meter) {
                 meter = createPanelWorkload(
                     workload,
                     barWidth,
-                    this.showPanelPercentages !== false
+                    displayValue
                 );
                 this._panelWorkloads.set(workload.key, meter);
-                this._panelContent.add_child(meter);
+                this._panelWorkloadBox.add_child(meter);
             } else {
                 updatePanelWorkload(
                     meter,
                     workload,
                     barWidth,
-                    this.showPanelPercentages !== false
+                    displayValue
                 );
             }
             meter.visible = true;

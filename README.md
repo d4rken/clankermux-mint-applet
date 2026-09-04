@@ -6,16 +6,16 @@
 A native Linux Mint/Cinnamon panel applet for monitoring the accounts behind a
 [Clankermux](https://github.com/d4rken/clankermux) proxy.
 
-The panel leads with Clankermux's pool pace, followed by separate headroom
-signals for each servable class and model family. For example:
+The panel shows separate headroom signals for each servable class and model
+family. For example:
 
 ```text
-PACE [ cut | add ] ROOM  Claude [ +31%]  GPT [ +39%]  Fable B [≥+31%] 2 spent
+Claude [ cut | add ]  GPT [ cut | add ]  Fable B* [ cut | add ] NO SAFE CUT
 ```
 
 When availability is degraded, the default-context account count appears as an
-exception beside the pace signal, for example `ROOM · 3/4!`. It stays separate
-from the pace bar because pace describes quota capacity while availability
+exception beside the workload signals, for example `3/4!`. It stays separate
+from the headroom bars because pace describes quota capacity while availability
 also includes pauses, cooldowns, credentials, and provider overloads.
 
 Rightward bars mean room for more measured load. Leftward bars mean load must be
@@ -25,7 +25,9 @@ without claiming the remaining pool is out.
 
 Exact percentages are hidden in the panel by default because counterfactual pace
 moves as recent burn changes. They remain in the tooltip and popup, and can be
-enabled in settings. The bar direction and `ROOM`, `CUT`, or `OUT` state remain visible.
+enabled in settings. Ordinary `ROOM` and `CUT` words are omitted because the bar
+already carries their direction. Exceptional states such as `NO SAFE CUT`, `OUT`,
+and `NO READING` remain visible. Pool-wide pace stays in the tooltip and popup.
 Click the applet for:
 
 - exact pool and per-workload pace headroom, including bound and evidence qualifiers
