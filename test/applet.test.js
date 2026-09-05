@@ -146,6 +146,22 @@ test('deadline crossing requests one forecast refresh even inside the usual minu
     assert.equal(h.applet._view.workloads[1].expired, true);
 });
 
+test('a pacing deadline crossing alone requests one forecast refresh', () => {
+    const h = appletHarness();
+    const pacing = fixtures.pacing();
+    pacing.classes[1].resetsAt = new Date(fixtures.NOW + 10000).toISOString();
+    h.applet._refresh(false, true);
+    h.reply('/public/v1/runway', fixtures.runway());
+    h.reply('/public/v1/pacing', pacing);
+    h.reply('/public/v1/workload-headroom', fixtures.nextResetWorkloads());
+    h.advance(10000);
+    h.applet._render();
+    assert.equal(h.applet._view.pacing.classes[1].expired, true);
+    assert.equal(h.applet._view.workloads.some(row => row.expired), false);
+    h.applet._refresh(false, true);
+    assert.equal(h.requests.size, 3);
+});
+
 test('stale transitions update an open popup even while the pointer is inside', () => {
     const h = appletHarness();
     h.applet.menu.isOpen = true;

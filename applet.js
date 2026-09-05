@@ -458,8 +458,12 @@ class ClankermuxUsageApplet extends Applet.Applet {
     _refresh(forceOutlook = false, outlookOnly = false) {
         if (this._refreshing || this._destroyed)
             return;
-        const expiredKey = (this._view?.paceRows || [])
-            .filter(row => row.expired).map(row => `${row.key}:${row.resetsAt}`).sort().join('|');
+        const expiredKey = [
+            ...(this._view?.workloads || []).filter(row => row.expired)
+                .map(row => `${row.key}:${row.resetsAt}`),
+            ...(this._view?.pacing?.classes || []).filter(item => item.expired)
+                .map(item => `class:${item.classId}:${item.resetsAt}`),
+        ].sort().join('|');
         const fetchOutlook = this._outlookSchedule.begin(Date.now(), forceOutlook, expiredKey);
         if (outlookOnly && !fetchOutlook)
             return;
