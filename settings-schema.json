@@ -73,7 +73,7 @@
   "show-panel-percentages": {
     "type": "switch",
     "default": false,
-    "description": "Show measured pace percentages beside workload bars"
+    "description": "Show pace percentages beside panel bars"
   },
   "runway-warning-hours": {
     "type": "spinbutton",
@@ -83,7 +83,7 @@
     "step": 1,
     "units": "hours",
     "description": "Warn in the popup when quota runway falls below",
-    "tooltip": "This affects the secondary runway detail. The panel shows pace until the next weekly reset."
+    "tooltip": "This affects the runway line in the popup. Panel bars show pace."
   },
   "show-scoped-limits": {
     "type": "switch",

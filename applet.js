@@ -121,12 +121,6 @@ function createPanelWorkload(row, width, displayValue) {
         y_align: Clutter.ActorAlign.CENTER,
     });
     meter.add_child(meter._clankermuxLabel);
-    meter._clankermuxBasis = new St.Label({
-        text: 'B',
-        style_class: 'clankermux-bound-badge',
-        y_align: Clutter.ActorAlign.CENTER,
-    });
-    meter.add_child(meter._clankermuxBasis);
     meter._clankermuxTrack = createPaceTrack(row, width, 'clankermux-panel-pace-track');
     meter.add_child(meter._clankermuxTrack);
     meter._clankermuxValue = new St.Label({ y_align: Clutter.ActorAlign.CENTER });
@@ -136,121 +130,41 @@ function createPanelWorkload(row, width, displayValue) {
 }
 
 function updatePanelWorkload(meter, row, width, displayValue) {
-    meter._clankermuxLabel.set_text(`${row.label}${row.incomplete ? '*' : ''}`);
-    meter._clankermuxBasis.set_text(row.basis === 'bound' ? 'B' : '?');
-    meter._clankermuxBasis.visible = row.basis !== 'exact';
+    meter._clankermuxLabel.set_text(row.label);
     updatePaceTrack(meter._clankermuxTrack, row, width);
     meter._clankermuxValue.set_text(displayValue);
     meter._clankermuxValue.set_style_class_name(`clankermux-panel-pace-value ${row.severity}`);
     meter._clankermuxValue.visible = Boolean(displayValue);
 }
 
-class PaceMenuItem extends PopupMenu.PopupBaseMenuItem {
-    constructor(pace) {
-        super({ reactive: false });
-        const outer = new St.BoxLayout({ vertical: true, style_class: 'clankermux-pace-summary' });
-        const heading = new St.BoxLayout({ style_class: 'clankermux-pace-summary-heading' });
-        heading.add_child(new St.Label({ text: 'API-key / pool pace context', style_class: 'clankermux-account-name' }));
-        heading.add_child(createPaceTrack(pace, 170));
-        heading.add_child(new St.Label({
-            text: pace.valueText,
-            style_class: `clankermux-pace-summary-value ${pace.severity}`,
-            y_align: Clutter.ActorAlign.CENTER,
-        }));
-        outer.add_child(heading);
-        outer.add_child(new St.Label({
-            text: `${pace.summary}\nCoverage: ${pace.coverageText}\n${pace.freshnessText}`,
-            style_class: 'clankermux-info-subtitle',
-        }));
-        this.addActor(outer, { expand: true });
-    }
-}
-
-class WorkloadSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
-    constructor(workloads) {
+class PaceSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
+    constructor(paceRows) {
         super({ reactive: false });
         const outer = new St.BoxLayout({ vertical: true, style_class: 'clankermux-workloads' });
-        outer.add_child(new St.Label({ text: 'Workload forecasts', style_class: 'clankermux-account-name' }));
-        for (const workload of workloads) {
-            const row = new St.BoxLayout({ style_class: 'clankermux-workload-row' });
-            row.add_child(new St.Label({
-                text: `${workload.label}${workload.incomplete ? '*' : ''}`,
+        outer.add_child(new St.Label({ text: 'Pacing', style_class: 'clankermux-account-name' }));
+        for (const row of paceRows) {
+            const line = new St.BoxLayout({ style_class: 'clankermux-workload-row' });
+            line.add_child(new St.Label({
+                text: row.label,
                 style_class: 'clankermux-workload-label',
                 y_align: Clutter.ActorAlign.CENTER,
             }));
-            if (workload.basis !== 'exact') {
-                row.add_child(new St.Label({
-                    text: workload.basis === 'bound' ? 'BOUND' : 'UNKNOWN',
+            if (row.binding) {
+                line.add_child(new St.Label({
+                    text: 'BINDING',
                     style_class: 'clankermux-bound-badge',
                 }));
             }
-            row.add_child(createPaceTrack(workload, 150));
-            row.add_child(new St.Label({
-                text: workload.valueText,
-                style_class: `clankermux-workload-value ${workload.severity}`,
+            line.add_child(createPaceTrack(row, 150));
+            line.add_child(new St.Label({
+                text: row.valueText,
+                style_class: `clankermux-workload-value ${row.severity}`,
                 y_align: Clutter.ActorAlign.CENTER,
             }));
-            outer.add_child(row);
+            outer.add_child(line);
             outer.add_child(new St.Label({
-                text: `${workload.intervalLabel}${workload.resetText ? ` · ${workload.resetText}` : ''}\n` +
-                    `${workload.summary}${workload.projectionLabel && !workload.summary.includes(workload.projectionLabel) ? ` · ${workload.projectionLabel}` : ''}`,
+                text: row.detail,
                 style_class: 'clankermux-info-subtitle',
-            }));
-            outer.add_child(new St.Label({
-                text: `${workload.longTerm.intervalLabel}\n${workload.longTerm.summary}`,
-                style_class: 'clankermux-info-subtitle',
-            }));
-            outer.add_child(new St.Label({
-                text: `${workload.basisLabel} · ${workload.depthText}` +
-                    `${workload.coverageCaveat ? `\n${workload.coverageCaveat}` : ''}\n${workload.freshnessText}`,
-                style_class: 'clankermux-info-subtitle',
-            }));
-        }
-        this.addActor(outer, { expand: true });
-    }
-}
-
-class PacingSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
-    constructor(pacing, model, nowMs) {
-        super({ reactive: false });
-        const outer = new St.BoxLayout({ vertical: true, style_class: 'clankermux-class-pacing' });
-        outer.add_child(new St.Label({ text: pacing.stale ? 'Class pacing · Stale (last reading)' : 'Class pacing', style_class: 'clankermux-account-name' }));
-        outer.add_child(new St.Label({
-            text: `${pacing.freshnessText}\n5-hour governor: ${model.humanizeStatus(pacing.fiveHourOutlookTone)}`,
-            style_class: `clankermux-five-hour ${pacing.fiveHourSeverity}`,
-        }));
-        for (const item of pacing.classes) {
-            const heading = `${item.label}${item.binding ? ' · BINDING' : ''}`;
-            const utilization = item.utilizationPct === null ? 'weekly usage unknown' :
-                `${item.utilizationPct}% used on least-used account`;
-            const reset = item.resetsAt ? ` · resets ${model.formatReset(item.resetsAt, nowMs)}` : '';
-            const failover = item.singlePointOfFailure ? ' · no failover' : '';
-            const projection = item.willRunOut
-                ? ` · ${item.willRunOut} of ${item.eligibleTotal} projected to hit 100%`
-                : '';
-            outer.add_child(new St.Label({
-                text: heading,
-                style_class: `clankermux-class-heading ${item.severity}`,
-            }));
-            outer.add_child(new St.Label({
-                text: `${utilization}${reset}${projection}${failover}`,
-                style_class: 'clankermux-info-subtitle',
-            }));
-            outer.add_child(new St.Label({
-                text: `Burn: ${item.burnText}`,
-                style_class: `clankermux-burn ${item.burnSeverity}`,
-            }));
-            let fiveHourSummary = item.fiveHour.summary;
-            const nextLift = model.formatReset(item.fiveHour.nextLiftAt, nowMs);
-            if (nextLift) {
-                const account = item.fiveHour.nextLiftAccountName
-                    ? ` on ${item.fiveHour.nextLiftAccountName}`
-                    : '';
-                fiveHourSummary += ` · next lift ${nextLift}${account}`;
-            }
-            outer.add_child(new St.Label({
-                text: fiveHourSummary,
-                style_class: 'clankermux-five-hour',
             }));
         }
         this.addActor(outer, { expand: true });
@@ -282,19 +196,24 @@ class AccountMenuItem extends PopupMenu.PopupBaseMenuItem {
             x_align: Clutter.ActorAlign.END,
             y_align: Clutter.ActorAlign.CENTER,
         }));
+        heading.add_child(new St.Label({
+            text: account.state.label,
+            style_class: `clankermux-state ${account.stateClass}`,
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
         outer.add_child(heading);
 
-        const stateParts = [account.state.label];
-        if (account.state.until)
-            stateParts.push(`retry ${model.formatReset(account.state.until, nowMs)}`);
-        if (account.credential)
-            stateParts.push(account.credential.label);
-        if (account.measurementNotice)
-            stateParts.push(account.measurementNotice);
-        outer.add_child(new St.Label({
-            text: stateParts.join(' · '),
-            style_class: `clankermux-state ${account.stateClass}`,
-        }));
+        const notices = [
+            account.state.until ? `retry ${model.formatReset(account.state.until, nowMs)}` : '',
+            account.credential ? account.credential.label : '',
+            account.measurementNotice || '',
+        ].filter(Boolean);
+        if (notices.length) {
+            outer.add_child(new St.Label({
+                text: notices.join(' · '),
+                style_class: `clankermux-state ${account.stateClass}`,
+            }));
+        }
 
         if (account.windows.length) {
             for (const window of account.windows)
@@ -363,19 +282,13 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._panelContent = new St.BoxLayout({ style_class: 'clankermux-panel-content' });
         this._panelWorkloadBox = new St.BoxLayout({ style_class: 'clankermux-panel-workloads' });
         this._panelEmptyLabel = new St.Label({
-            text: 'workloads …',
+            text: 'pace …',
             style_class: 'clankermux-panel-loading',
             y_align: Clutter.ActorAlign.CENTER,
         });
-        this._panelStatusLabel = new St.Label({
-            style_class: 'clankermux-panel-status',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._panelStatusLabel.visible = false;
         this._panelWorkloads = new Map();
         this._panelContent.add_child(this._panelWorkloadBox);
         this._panelContent.add_child(this._panelEmptyLabel);
-        this._panelContent.add_child(this._panelStatusLabel);
         this.actor.add(this._panelContent, { y_align: St.Align.MIDDLE, y_fill: false });
         this.set_applet_tooltip('Loading Clankermux usage…');
 
@@ -545,7 +458,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
     _refresh(forceOutlook = false, outlookOnly = false) {
         if (this._refreshing || this._destroyed)
             return;
-        const expiredKey = (this._view?.workloads || [])
+        const expiredKey = (this._view?.paceRows || [])
             .filter(row => row.expired).map(row => `${row.key}:${row.resetsAt}`).sort().join('|');
         const fetchOutlook = this._outlookSchedule.begin(Date.now(), forceOutlook, expiredKey);
         if (outlookOnly && !fetchOutlook)
@@ -773,79 +686,59 @@ class ClankermuxUsageApplet extends Applet.Applet {
     _forecastState() {
         return JSON.stringify([
             this._view?.pace.stale, this._view?.pacing.stale, this._view?.workloadHeadroom.stale,
-            (this._view?.workloads || []).map(row => [row.key, row.stale, row.expired]),
+            (this._view?.paceRows || []).map(row => [row.key, row.stale, row.expired]),
         ]);
     }
 
     _renderPanel() {
         if (!this._accounts) {
-            this._panelEmptyLabel.set_text(this._lastError ? 'workloads !' : 'workloads …');
+            this._panelEmptyLabel.set_text(this._lastError ? 'pace !' : 'pace …');
             this._panelEmptyLabel.visible = true;
-            this._panelStatusLabel.visible = false;
             for (const meter of this._panelWorkloads.values())
                 meter.visible = false;
             this.set_applet_tooltip(this._lastError || 'Loading Clankermux usage…');
             return;
         }
 
-        const availabilityDegraded = this._view.pool.defaultRoutable < this._view.pool.configured;
-        const statusParts = [];
-        if (availabilityDegraded)
-            statusParts.push(`${this._view.pool.defaultRoutable}/${this._view.pool.configured}!`);
-        if (this._view.providerOverloads.length)
-            statusParts.push('⏳');
-        this._panelStatusLabel.set_text(statusParts.join(' '));
-        this._panelStatusLabel.visible = statusParts.length > 0;
         const barWidth = Math.max(30, Number(this.panelBarWidth || 52));
-        const visibleKeys = new Set(this._view.workloads.map(workload => workload.key));
+        const paceRows = this._view.paceRows;
+        const visibleKeys = new Set(paceRows.map(row => row.key));
         for (const [key, meter] of this._panelWorkloads)
             meter.visible = visibleKeys.has(key);
-        for (const workload of this._view.workloads) {
+        for (const row of paceRows) {
             const displayValue = this._model.panelWorkloadLabel(
-                workload,
+                row,
                 this.showPanelPercentages === true
             );
-            let meter = this._panelWorkloads.get(workload.key);
+            let meter = this._panelWorkloads.get(row.key);
             if (!meter) {
-                meter = createPanelWorkload(
-                    workload,
-                    barWidth,
-                    displayValue
-                );
-                this._panelWorkloads.set(workload.key, meter);
+                meter = createPanelWorkload(row, barWidth, displayValue);
+                this._panelWorkloads.set(row.key, meter);
                 this._panelWorkloadBox.add_child(meter);
             } else {
-                updatePanelWorkload(
-                    meter,
-                    workload,
-                    barWidth,
-                    displayValue
-                );
+                updatePanelWorkload(meter, row, barWidth, displayValue);
             }
             meter.visible = true;
         }
-        this._panelEmptyLabel.set_text(this._lastWorkloadHeadroomError ? 'workloads !' : 'workloads –');
-        this._panelEmptyLabel.visible = !this._view.workloads.length;
+        const paceUnavailable = this._lastPacingError || this._lastWorkloadHeadroomError;
+        this._panelEmptyLabel.set_text(paceUnavailable ? 'pace !' : 'pace –');
+        this._panelEmptyLabel.visible = !paceRows.length;
 
-        const lines = [
-            `Availability: ${this._view.pool.defaultRoutable} of ${this._view.pool.configured} accounts in the default routing context`,
-        ];
-        for (const workload of this._view.workloads) {
-            const basis = workload.basis === 'bound' ? ' · conservative bound' : '';
-            lines.push(
-                `${workload.label} · ${workload.intervalLabel}${workload.resetText ? ` · ${workload.resetText}` : ''}`,
-                `${workload.summary}${basis} · ${workload.depthText}`,
-                `${workload.longTerm.intervalLabel}: ${workload.longTerm.summary}`,
-                workload.freshnessText
-            );
-            if (workload.coverageCaveat)
-                lines.push(workload.coverageCaveat);
+        const lines = [];
+        for (const row of paceRows)
+            lines.push(`${row.label}: ${row.valueText}${row.binding ? ' · binding' : ''} · ${row.detail}`);
+        const runway = this._view.runway;
+        if (runway.available) {
+            const causes = runway.causes.length ? ` · ${runway.causes.join(' + ')}` : '';
+            const coverage = runway.complete ? '' : ` · ${runway.coverageText}`;
+            lines.push(`Runway: ${runway.value} · ${runway.summary}${causes}${coverage}`);
         }
+        const degraded = this._view.accounts
+            .filter(account => account.state.key !== 'available')
+            .map(account => `${account.name}: ${account.state.label}`);
         lines.push(
-            `API-key / pool pace context: ${this._view.pace.valueText} · ${this._view.pace.summary}`,
-            `Quota runway: ${this._view.runway.value} · ${this._view.runway.summary}`,
-            `Coverage: ${this._view.runway.coverageText}`,
-            this._view.runway.freshnessText
+            `Accounts: ${this._view.pool.defaultRoutable} of ${this._view.pool.configured} available` +
+            `${degraded.length ? ` · ${degraded.join(', ')}` : ''}`
         );
         for (const overload of this._view.providerOverloads) {
             const scope = overload.providerWide ? 'provider-wide' : 'provider or model scope';
@@ -854,31 +747,16 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 : overload.probeActive ? ' · recovery probe active' : '';
             lines.push(`${overload.provider} ${scope} overload ${overload.state}${retry}`);
         }
-        for (const pool of this._view.usagePools) {
-            const unknown = pool.unknownCount ? ` · ${pool.unknownCount} unknown` : '';
-            lines.push(`${pool.label}: ${pool.usedPercent}% mean usage across ${pool.accountCount} accounts${unknown}`);
-        }
-        if (this._lastRunwayError)
-            lines.push(`Last runway refresh failed: ${this._lastRunwayError}`);
-        if (this._lastPacingError)
-            lines.push(`Last pacing refresh failed: ${this._lastPacingError}`);
-        if (this._lastWorkloadHeadroomError)
-            lines.push(`Last workload refresh failed: ${this._lastWorkloadHeadroomError}`);
+        const forecastErrors = [...new Set([
+            this._lastRunwayError, this._lastPacingError, this._lastWorkloadHeadroomError,
+        ].filter(Boolean))];
+        if (forecastErrors.length)
+            lines.push(`Forecast refresh failed: ${forecastErrors.join(' · ')}`);
         if (this._lastError)
             lines.push(`Last refresh failed: ${this._lastError}`);
         else if (this._lastSuccess)
-            lines.push(`Accounts/status updated ${this._model.formatDuration(Date.now() - this._lastSuccess)} ago`);
+            lines.push(`Updated ${this._model.formatDuration(Date.now() - this._lastSuccess)} ago`);
         this.set_applet_tooltip(lines.join('\n'));
-    }
-
-    _feedErrorDetails(error, receivedAt) {
-        const details = [error];
-        if (receivedAt) {
-            const timestamp = this._model.formatTimestamp(receivedAt);
-            const age = this._model.formatDuration(Date.now() - receivedAt);
-            details.push(`Last successful fetch: ${timestamp} (${age} ago)`);
-        }
-        return details.join('\n');
     }
 
     _menuStateSignature() {
@@ -905,14 +783,6 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 window.forecastConfidence,
             ]),
         ]);
-        const pools = (view?.usagePools || []).map(pool => [
-            pool.key,
-            pool.accountCount,
-            pool.unknownCount,
-            pool.usedPercent,
-            pool.severity,
-            pool.nextResetAt,
-        ]);
         const overloads = (view?.providerOverloads || []).map(overload => [
             overload.key,
             overload.until,
@@ -922,12 +792,9 @@ class ClankermuxUsageApplet extends Applet.Applet {
             Boolean(this._accounts),
             this._model.normalizeBaseUrl(this.apiUrl),
             view?.pool || null,
-            view?.pace || null,
-            view?.pacing || null,
+            view?.paceRows || null,
             view?.runway || null,
-            view?.workloads || null,
             accounts,
-            pools,
             overloads,
             this._lastError || '',
             this._lastRunwayError || '',
@@ -963,68 +830,55 @@ class ClankermuxUsageApplet extends Applet.Applet {
             return;
         }
 
-        let subtitle = `${this._view.pool.defaultRoutable} of ${this._view.pool.configured} accounts available in the default routing context`;
+        let subtitle = `${this._view.pool.defaultRoutable} of ${this._view.pool.configured} accounts available`;
         if (this._lastError)
-            subtitle += ' · showing cached data';
-        subtitle += `\n${this._lastRefreshText()}`;
+            subtitle += ' · cached';
+        subtitle += ` · ${this._lastRefreshText()}`;
         this.menu.addMenuItem(new InfoMenuItem('Clankermux usage', subtitle));
 
-        if (this._lastRunwayError) {
+        if (this._view.paceRows.length) {
+            this.menu.addMenuItem(new PaceSummaryMenuItem(this._view.paceRows));
+        } else {
             this.menu.addMenuItem(new InfoMenuItem(
-                this._runway ? 'Pool pace is cached' : 'Pool pace unavailable',
-                this._feedErrorDetails(this._lastRunwayError, this._runwayReceivedAt),
+                'Pacing unavailable',
+                this._lastPacingError || this._lastWorkloadHeadroomError || 'No workloads reported'
+            ));
+        }
+
+        const failedFeeds = [
+            ['Runway', this._lastRunwayError, this._runway, this._runwayReceivedAt],
+            ['Class pacing', this._lastPacingError, this._pacing, this._pacingReceivedAt],
+            ['Workload headroom', this._lastWorkloadHeadroomError,
+                this._workloadHeadroom, this._workloadHeadroomReceivedAt],
+        ].filter(([, error]) => Boolean(error));
+        if (failedFeeds.length) {
+            const cached = failedFeeds.filter(([, , resource]) => Boolean(resource)).length;
+            const details = failedFeeds.map(([label, error, resource, receivedAt]) => {
+                const timestamp = this._model.formatTimestamp(receivedAt);
+                const age = this._model.formatDuration(Date.now() - receivedAt);
+                return `${label}: ${error} · ` +
+                    `${resource ? `last success ${timestamp} (${age} ago)` : 'no cached reading'}`;
+            });
+            this.menu.addMenuItem(new InfoMenuItem(
+                cached === failedFeeds.length ? 'Forecasts cached' :
+                    cached === 0 ? 'Forecasts unavailable' : 'Forecasts partly cached',
+                details.join('\n'),
                 'warning'
             ));
         }
-        if (this._view.workloads.length)
-            this.menu.addMenuItem(new WorkloadSummaryMenuItem(this._view.workloads));
-        else
-            this.menu.addMenuItem(new InfoMenuItem(
-                this._view.workloadHeadroom.stale ? 'Workload forecast stale' :
-                    this._workloadHeadroom ? 'No active accounts for this workload' : 'Workload forecast unavailable',
-                this._view.workloadHeadroom.freshnessText
-            ));
-        if (this._lastWorkloadHeadroomError)
-            this.menu.addMenuItem(new InfoMenuItem(
-                this._workloadHeadroom ? 'Workload headroom is cached' : 'Workload headroom unavailable',
-                this._feedErrorDetails(
-                    this._lastWorkloadHeadroomError,
-                    this._workloadHeadroomReceivedAt
-                ),
-                'warning'
-            ));
-        if (this._view.pacing.classes.length)
-            this.menu.addMenuItem(new PacingSummaryMenuItem(
-                this._view.pacing,
-                this._model,
-                Date.now()
-            ));
-        if (this._lastPacingError)
-            this.menu.addMenuItem(new InfoMenuItem(
-                this._pacing ? 'Class pacing is cached' : 'Class pacing unavailable',
-                this._feedErrorDetails(this._lastPacingError, this._pacingReceivedAt),
-                'warning'
-            ));
 
-        this.menu.addMenuItem(new PaceMenuItem(this._view.pace));
+        const runway = this._view.runway;
         const runwayDetails = [
-            this._view.runway.freshnessText,
-            this._view.runway.summary,
-            `Coverage: ${this._view.runway.coverageText}`,
-            `Model horizon: ${this._view.runway.horizonText}`,
-        ];
-        if (this._view.runway.ageMs !== null)
-            runwayDetails.push(`Projection updated: ${this._model.formatDuration(this._view.runway.ageMs)} ago`);
-        if (this._view.runway.causes.length)
-            runwayDetails.push(`Cause: ${this._view.runway.causes.join(' + ')}`);
-        if (this._view.runway.bandText)
-            runwayDetails.push(`Quantisation band: ${this._view.runway.bandText}`);
-        const runwayStyle = this._view.runway.severity === 'critical'
+            runway.summary,
+            runway.causes.length ? `Cause: ${runway.causes.join(' + ')}` : '',
+            runway.available && !runway.complete ? runway.coverageText : '',
+        ].filter(Boolean);
+        const runwayStyle = runway.severity === 'critical'
             ? 'error'
-            : this._view.runway.severity === 'warning' ? 'warning' : '';
+            : runway.severity === 'warning' ? 'warning' : '';
         this.menu.addMenuItem(new InfoMenuItem(
-            `Quota runway${this._view.runway.stale ? ' · Stale' : ''} · ${this._view.runway.value}`,
-            runwayDetails.join('\n'),
+            `Runway${runway.stale ? ' · stale' : ''} · ${runway.value}`,
+            runwayDetails.join(' · '),
             runwayStyle
         ));
         for (const overload of this._view.providerOverloads) {
@@ -1052,10 +906,10 @@ class ClankermuxUsageApplet extends Applet.Applet {
 
     _lastRefreshText() {
         if (!this._lastSuccess)
-            return 'Accounts/status refreshed: Never';
+            return 'never refreshed';
         const timestamp = this._model.formatTimestamp(this._lastSuccess);
         const age = this._model.formatDuration(Date.now() - this._lastSuccess);
-        return `Accounts/status refreshed: ${timestamp} (${age} ago)`;
+        return `updated ${timestamp} (${age} ago)`;
     }
 
     _addMenuActions() {
