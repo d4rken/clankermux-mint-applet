@@ -12,7 +12,6 @@ const St = imports.gi.St;
 
 const UUID = 'clankermux-usage@d4rken';
 const PROGRESS_WIDTH = 116;
-const OUTLOOK_REFRESH_MS = 60 * 1000;
 
 function createProgressTrack(percent, severity, width, styleClass = 'clankermux-progress-track') {
     const track = new St.Bin({
@@ -151,7 +150,7 @@ class PaceMenuItem extends PopupMenu.PopupBaseMenuItem {
         super({ reactive: false });
         const outer = new St.BoxLayout({ vertical: true, style_class: 'clankermux-pace-summary' });
         const heading = new St.BoxLayout({ style_class: 'clankermux-pace-summary-heading' });
-        heading.add_child(new St.Label({ text: 'Pool pace', style_class: 'clankermux-account-name' }));
+        heading.add_child(new St.Label({ text: 'API-key / pool pace context', style_class: 'clankermux-account-name' }));
         heading.add_child(createPaceTrack(pace, 170));
         heading.add_child(new St.Label({
             text: pace.valueText,
@@ -160,7 +159,7 @@ class PaceMenuItem extends PopupMenu.PopupBaseMenuItem {
         }));
         outer.add_child(heading);
         outer.add_child(new St.Label({
-            text: `${pace.summary}\nCoverage: ${pace.coverageText}`,
+            text: `${pace.summary}\nCoverage: ${pace.coverageText}\n${pace.freshnessText}`,
             style_class: 'clankermux-info-subtitle',
         }));
         this.addActor(outer, { expand: true });
@@ -171,7 +170,7 @@ class WorkloadSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
     constructor(workloads) {
         super({ reactive: false });
         const outer = new St.BoxLayout({ vertical: true, style_class: 'clankermux-workloads' });
-        outer.add_child(new St.Label({ text: 'Workload headroom', style_class: 'clankermux-account-name' }));
+        outer.add_child(new St.Label({ text: 'Workload forecasts', style_class: 'clankermux-account-name' }));
         for (const workload of workloads) {
             const row = new St.BoxLayout({ style_class: 'clankermux-workload-row' });
             row.add_child(new St.Label({
@@ -193,7 +192,17 @@ class WorkloadSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
             }));
             outer.add_child(row);
             outer.add_child(new St.Label({
-                text: `${workload.summary} · ${workload.basisLabel} · ${workload.depthText} · ${workload.projectionLabel}`,
+                text: `${workload.intervalLabel}${workload.resetText ? ` · ${workload.resetText}` : ''}\n` +
+                    `${workload.summary}${workload.projectionLabel && !workload.summary.includes(workload.projectionLabel) ? ` · ${workload.projectionLabel}` : ''}`,
+                style_class: 'clankermux-info-subtitle',
+            }));
+            outer.add_child(new St.Label({
+                text: `${workload.longTerm.intervalLabel}\n${workload.longTerm.summary}`,
+                style_class: 'clankermux-info-subtitle',
+            }));
+            outer.add_child(new St.Label({
+                text: `${workload.basisLabel} · ${workload.depthText}` +
+                    `${workload.coverageCaveat ? `\n${workload.coverageCaveat}` : ''}\n${workload.freshnessText}`,
                 style_class: 'clankermux-info-subtitle',
             }));
         }
@@ -205,9 +214,9 @@ class PacingSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
     constructor(pacing, model, nowMs) {
         super({ reactive: false });
         const outer = new St.BoxLayout({ vertical: true, style_class: 'clankermux-class-pacing' });
-        outer.add_child(new St.Label({ text: 'Class pacing', style_class: 'clankermux-account-name' }));
+        outer.add_child(new St.Label({ text: pacing.stale ? 'Class pacing · Stale (last reading)' : 'Class pacing', style_class: 'clankermux-account-name' }));
         outer.add_child(new St.Label({
-            text: `5-hour governor: ${model.humanizeStatus(pacing.fiveHourOutlookTone)}`,
+            text: `${pacing.freshnessText}\n5-hour governor: ${model.humanizeStatus(pacing.fiveHourOutlookTone)}`,
             style_class: `clankermux-five-hour ${pacing.fiveHourSeverity}`,
         }));
         for (const item of pacing.classes) {
@@ -304,6 +313,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
     constructor(metadata, orientation, panelHeight, instanceId, model, polling) {
         super(orientation, panelHeight, instanceId);
         this._metadata = metadata;
+        this._pollingModule = polling;
         this._model = model;
         this._destroyed = false;
         this._pollId = 0;
@@ -321,7 +331,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._runwayReceivedAt = 0;
         this._pacingReceivedAt = 0;
         this._workloadHeadroomReceivedAt = 0;
-        this._lastOutlookAttempt = 0;
+        this._outlookSchedule = polling.createOutlookSchedule();
         this._lastRunwayError = '';
         this._lastPacingError = '';
         this._lastWorkloadHeadroomError = '';
@@ -390,7 +400,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 this._menuRebuildPending = false;
                 return;
             }
-            this._polling.ensure();
+            this._render();
             this._renderMenu();
         });
 
@@ -406,6 +416,15 @@ class ClankermuxUsageApplet extends Applet.Applet {
 
         this._createSession();
         this._schedulePolling();
+        this._forecastClockId = Mainloop.timeout_add_seconds(1, () => {
+            try {
+                this._render();
+                this._refresh(false, true);
+            } catch (error) {
+                this._onPollingError(error);
+            }
+            return !this._destroyed;
+        });
         this._render();
         this._refresh(true);
     }
@@ -433,7 +452,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._runwayReceivedAt = 0;
         this._pacingReceivedAt = 0;
         this._workloadHeadroomReceivedAt = 0;
-        this._lastOutlookAttempt = 0;
+        this._outlookSchedule = this._pollingModule.createOutlookSchedule();
         this._lastRunwayError = '';
         this._lastPacingError = '';
         this._lastWorkloadHeadroomError = '';
@@ -523,14 +542,17 @@ class ClankermuxUsageApplet extends Applet.Applet {
         }
     }
 
-    _refresh(forceOutlook = false) {
+    _refresh(forceOutlook = false, outlookOnly = false) {
         if (this._refreshing || this._destroyed)
+            return;
+        const expiredKey = (this._view?.workloads || [])
+            .filter(row => row.expired).map(row => `${row.key}:${row.resetsAt}`).sort().join('|');
+        const fetchOutlook = this._outlookSchedule.begin(Date.now(), forceOutlook, expiredKey);
+        if (outlookOnly && !fetchOutlook)
             return;
         this._refreshing = true;
         const generation = ++this._requestGeneration;
-        const fetchOutlook = forceOutlook || !this._lastOutlookAttempt ||
-            Date.now() - this._lastOutlookAttempt >= OUTLOOK_REFRESH_MS;
-        const cycle = this._model.createRefreshCycle(fetchOutlook ? 5 : 2);
+        const cycle = this._model.createRefreshCycle((outlookOnly ? 0 : 2) + (fetchOutlook ? 3 : 0));
         const timeoutSeconds = Math.max(2, Number(this.requestTimeout || 8));
         const cancellable = new Gio.Cancellable();
         this._refreshCancellable = cancellable;
@@ -569,18 +591,20 @@ class ClankermuxUsageApplet extends Applet.Applet {
             this._refreshCancellable = null;
             this._refreshing = false;
 
-            accountsError = accountsError || validate(
-                accountsResult,
-                'clankermux.public.accounts.v1',
-                'accounts',
-                data => Array.isArray(data.accounts)
-            );
-            statusError = statusError || validate(
-                statusResult,
-                'clankermux.public.status.v1',
-                'status',
-                data => Boolean(data.pool)
-            );
+            if (!outlookOnly) {
+                accountsError = accountsError || validate(
+                    accountsResult,
+                    'clankermux.public.accounts.v1',
+                    'accounts',
+                    data => Array.isArray(data.accounts)
+                );
+                statusError = statusError || validate(
+                    statusResult,
+                    'clankermux.public.status.v1',
+                    'status',
+                    data => Boolean(data.pool)
+                );
+            }
             if (fetchOutlook) {
                 runwayError = runwayError || validate(
                     runwayResult,
@@ -604,9 +628,9 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 );
             }
 
-            if (!accountsError)
+            if (!outlookOnly && !accountsError)
                 this._accounts = accountsResult.accounts;
-            if (!statusError) {
+            if (!outlookOnly && !statusError) {
                 this._status = statusResult;
                 this._statusReceivedAt = statusReceivedAt || Date.now();
             }
@@ -634,10 +658,12 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 }
             }
 
-            if (!accountsError && !statusError) {
+            if (fetchOutlook)
+                this._outlookSchedule.complete(Date.now(), Boolean(runwayError || pacingError || workloadHeadroomError));
+            if (!outlookOnly && !accountsError && !statusError) {
                 this._lastSuccess = Date.now();
                 this._lastError = '';
-            } else {
+            } else if (!outlookOnly) {
                 const failures = [accountsError, statusError]
                     .filter(Boolean)
                     .map(error => this._errorMessage(error));
@@ -655,25 +681,34 @@ class ClankermuxUsageApplet extends Applet.Applet {
             this._refreshing = false;
             this._refreshCancellable = null;
             cancellable.cancel();
-            this._lastError = `Refresh timed out after ${timeoutSeconds}s`;
+            const timeoutError = `Refresh timed out after ${timeoutSeconds}s`;
+            if (!outlookOnly)
+                this._lastError = timeoutError;
+            if (fetchOutlook) {
+                this._lastRunwayError = timeoutError;
+                this._lastPacingError = timeoutError;
+                this._lastWorkloadHeadroomError = timeoutError;
+                this._outlookSchedule.complete(Date.now(), true);
+            }
             this._createSession();
             this._render();
             return false;
         });
 
-        this._getJson('/public/v1/accounts', generation, cancellable, (error, data) => {
-            accountsError = error;
-            accountsResult = data;
-            complete();
-        });
-        this._getJson('/public/v1/status', generation, cancellable, (error, data) => {
-            statusError = error;
-            statusResult = data;
-            statusReceivedAt = Date.now();
-            complete();
-        });
+        if (!outlookOnly) {
+            this._getJson('/public/v1/accounts', generation, cancellable, (error, data) => {
+                accountsError = error;
+                accountsResult = data;
+                complete();
+            });
+            this._getJson('/public/v1/status', generation, cancellable, (error, data) => {
+                statusError = error;
+                statusResult = data;
+                statusReceivedAt = Date.now();
+                complete();
+            });
+        }
         if (fetchOutlook) {
-            this._lastOutlookAttempt = Date.now();
             this._getJson('/public/v1/runway', generation, cancellable, (error, data) => {
                 runwayError = error;
                 runwayResult = data;
@@ -706,6 +741,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
         if (!this._model || !this.menu)
             return;
         this._polling.ensure();
+        const oldForecastState = this._forecastState();
         this._view = this._model.buildView(
             this._accounts,
             this._status,
@@ -720,11 +756,25 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 runwayReceivedAt: this._runwayReceivedAt,
                 pacingReceivedAt: this._pacingReceivedAt,
                 workloadHeadroomReceivedAt: this._workloadHeadroomReceivedAt,
+                runwayFetchFailed: Boolean(this._lastRunwayError),
+                pacingFetchFailed: Boolean(this._lastPacingError),
+                workloadHeadroomFetchFailed: Boolean(this._lastWorkloadHeadroomError),
             }
         );
         this._renderPanel();
-        if (this.menu.isOpen && this._menuStateSignature() !== this._menuSignature)
-            this._requestMenuRebuild();
+        if (this.menu.isOpen && this._menuStateSignature() !== this._menuSignature) {
+            if (oldForecastState !== this._forecastState())
+                this._renderMenu();
+            else
+                this._requestMenuRebuild();
+        }
+    }
+
+    _forecastState() {
+        return JSON.stringify([
+            this._view?.pace.stale, this._view?.pacing.stale, this._view?.workloadHeadroom.stale,
+            (this._view?.workloads || []).map(row => [row.key, row.stale, row.expired]),
+        ]);
     }
 
     _renderPanel() {
@@ -778,18 +828,25 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._panelEmptyLabel.visible = !this._view.workloads.length;
 
         const lines = [
-            `Pool pace: ${this._view.pace.valueText} · ${this._view.pace.summary}`,
-            `Quota runway: ${this._view.runway.value}`,
-            this._view.runway.summary,
-            `Coverage: ${this._view.runway.coverageText}`,
             `Availability: ${this._view.pool.defaultRoutable} of ${this._view.pool.configured} accounts in the default routing context`,
         ];
         for (const workload of this._view.workloads) {
             const basis = workload.basis === 'bound' ? ' · conservative bound' : '';
             lines.push(
-                `${workload.label}: ${workload.valueText} · ${workload.summary}${basis} · ${workload.depthText}`
+                `${workload.label} · ${workload.intervalLabel}${workload.resetText ? ` · ${workload.resetText}` : ''}`,
+                `${workload.summary}${basis} · ${workload.depthText}`,
+                `${workload.longTerm.intervalLabel}: ${workload.longTerm.summary}`,
+                workload.freshnessText
             );
+            if (workload.coverageCaveat)
+                lines.push(workload.coverageCaveat);
         }
+        lines.push(
+            `API-key / pool pace context: ${this._view.pace.valueText} · ${this._view.pace.summary}`,
+            `Quota runway: ${this._view.runway.value} · ${this._view.runway.summary}`,
+            `Coverage: ${this._view.runway.coverageText}`,
+            this._view.runway.freshnessText
+        );
         for (const overload of this._view.providerOverloads) {
             const scope = overload.providerWide ? 'provider-wide' : 'provider or model scope';
             const retry = overload.until
@@ -878,7 +935,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
             this._lastWorkloadHeadroomError || '',
             this._lastSuccess ? 1 : 0,
             this._refreshing ? 1 : 0,
-        ]);
+        ], (key, value) => key === 'ageMs' ? undefined : value);
     }
 
     _requestMenuRebuild() {
@@ -912,7 +969,6 @@ class ClankermuxUsageApplet extends Applet.Applet {
         subtitle += `\n${this._lastRefreshText()}`;
         this.menu.addMenuItem(new InfoMenuItem('Clankermux usage', subtitle));
 
-        this.menu.addMenuItem(new PaceMenuItem(this._view.pace));
         if (this._lastRunwayError) {
             this.menu.addMenuItem(new InfoMenuItem(
                 this._runway ? 'Pool pace is cached' : 'Pool pace unavailable',
@@ -922,6 +978,12 @@ class ClankermuxUsageApplet extends Applet.Applet {
         }
         if (this._view.workloads.length)
             this.menu.addMenuItem(new WorkloadSummaryMenuItem(this._view.workloads));
+        else
+            this.menu.addMenuItem(new InfoMenuItem(
+                this._view.workloadHeadroom.stale ? 'Workload forecast stale' :
+                    this._workloadHeadroom ? 'No active accounts for this workload' : 'Workload forecast unavailable',
+                this._view.workloadHeadroom.freshnessText
+            ));
         if (this._lastWorkloadHeadroomError)
             this.menu.addMenuItem(new InfoMenuItem(
                 this._workloadHeadroom ? 'Workload headroom is cached' : 'Workload headroom unavailable',
@@ -935,7 +997,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
             this.menu.addMenuItem(new PacingSummaryMenuItem(
                 this._view.pacing,
                 this._model,
-                this._view.nowMs
+                Date.now()
             ));
         if (this._lastPacingError)
             this.menu.addMenuItem(new InfoMenuItem(
@@ -944,7 +1006,9 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 'warning'
             ));
 
+        this.menu.addMenuItem(new PaceMenuItem(this._view.pace));
         const runwayDetails = [
+            this._view.runway.freshnessText,
             this._view.runway.summary,
             `Coverage: ${this._view.runway.coverageText}`,
             `Model horizon: ${this._view.runway.horizonText}`,
@@ -959,7 +1023,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
             ? 'error'
             : this._view.runway.severity === 'warning' ? 'warning' : '';
         this.menu.addMenuItem(new InfoMenuItem(
-            `Quota runway · ${this._view.runway.value}`,
+            `Quota runway${this._view.runway.stale ? ' · Stale' : ''} · ${this._view.runway.value}`,
             runwayDetails.join('\n'),
             runwayStyle
         ));
@@ -1029,6 +1093,10 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._requestGeneration++;
         this._cancelActiveRefresh();
         this._polling.stop();
+        if (this._forecastClockId) {
+            Mainloop.source_remove(this._forecastClockId);
+            this._forecastClockId = 0;
+        }
         if (this._session)
             this._session.abort();
         if (this.settings)

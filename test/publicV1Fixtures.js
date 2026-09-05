@@ -300,10 +300,30 @@ function workloadHeadroom(overrides = {}) {
     };
 }
 
+function nextResetWorkloads(overrides = {}) {
+    const response = workloadHeadroom();
+    response.rows = response.rows.map(row => ({
+        ...row,
+        nextReset: {
+            resetsAt: '2026-08-25T12:00:00.000Z',
+            outcomeKind: 'beyond_horizon', exhaustsAt: null,
+            headroomPct: 25, headroomDirection: 'margin',
+            projectionBasis: row.projectionBasis,
+        },
+    }));
+    response.rows[1] = {
+        ...response.rows[1],
+        outcomeKind: 'runway', headroomPct: 40, headroomDirection: 'deficit',
+        exhaustsAt: '2026-08-29T12:00:00.000Z',
+    };
+    return { ...response, ...overrides };
+}
+
 module.exports = {
     NOW,
     NOW_ISO,
     accounts,
+    nextResetWorkloads,
     pacing,
     runway,
     status,

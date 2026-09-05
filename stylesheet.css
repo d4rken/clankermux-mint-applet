@@ -172,6 +172,7 @@
 .clankermux-panel-pace-value.unknown,
 .clankermux-workload-value.unknown,
 .clankermux-pace-summary-value.unknown,
+.clankermux-class-heading.unknown,
 .clankermux-panel-loading {
     color: #a8a8a8;
 }
@@ -243,7 +244,7 @@
 }
 
 .clankermux-workload-value {
-    width: 72px;
+    min-width: 90px;
 }
 
 .clankermux-class-heading {

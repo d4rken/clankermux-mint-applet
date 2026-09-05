@@ -6,8 +6,8 @@
 A native Linux Mint/Cinnamon panel applet for monitoring the accounts behind a
 [Clankermux](https://github.com/d4rken/clankermux) proxy.
 
-The panel shows separate headroom signals for each servable class and model
-family. For example:
+The panel shows separate pace signals until the next weekly reset for each
+servable class and model family. For example:
 
 ```text
 Claude [ cut | add ]  GPT [ cut | add ]  Fable B* [ cut | add ]
@@ -18,21 +18,32 @@ exception beside the workload signals, for example `3/4!`. It stays separate
 from the headroom bars because pace describes quota capacity while availability
 also includes pauses, cooldowns, credentials, and provider overloads.
 
-Rightward bars mean room for more measured load. Leftward bars mean load must be
-cut. `B` marks a conservative family bound rather than an exact threshold, and
-`*` marks incomplete evidence. Account depth, including spent and unreadable
-accounts, stays in the tooltip and popup instead of consuming panel space.
+Rightward bars show measured pace margin until the next weekly reset. Leftward
+bars show a required pace reduction if the current burn continues. `B` marks a
+conservative family bound, and `*` marks incomplete account coverage. Eligible,
+spent and unreadable account counts stay in the tooltip and popup.
+
+Each workload's popup and tooltip show two independent intervals:
+
+- **Until next weekly reset**, with the earliest known weekly deadline among
+  active accounts supporting that workload and a countdown in local time.
+- **Long-term pace**, with the number of days supplied by the server, usually 14.
+
+A workload can have room until its next reset while needing a reduction over
+14 days. The next weekly deadline does not imply that every account resets
+together; five-hour constraints still participate in both forecasts.
 
 Exact percentages are hidden in the panel by default because counterfactual pace
 moves as recent burn changes. They remain in the tooltip and popup, and can be
-enabled in settings. The panel adds no state words because the graph already
-carries their direction. Proportional fill shows a stated magnitude. Full-scale
-fill marks a definite scale-end result, including a reduction beyond the 50%
-probe range.
-Exact state text and pool-wide pace stay in the tooltip and popup.
+enabled in settings. Proportional fill shows a stated magnitude, capped at the graph's 50% scale.
+An exhausted modeled workload also fills the cut side. Missing percentages,
+early estimates and unavailable forecasts leave the graph neutral.
+`Stale` and `Expired` remain visible in the panel even when percentages are hidden.
+API-key/pool pace and runway remain secondary context in the tooltip and popup;
+they do not describe how much an individual workload can grow.
 Click the applet for:
 
-- exact pool and per-workload pace headroom, including bound and evidence qualifiers
+- next-reset and long-term workload forecasts, including bound and evidence qualifiers
 - class burn ratios, weekly outlook, failover depth, and 5-hour governor state
 - projected quota runway, uncertainty band, model horizon, API-key coverage, and cause
 - 5-hour and 7-day usage bars for every account
@@ -49,9 +60,21 @@ including open and half-open recovery states.
 
 The exact class headroom is a threshold. Family headroom is a conservative
 bound because Clankermux cannot isolate a family's share of account-wide burn.
-Null is never zero: depending on the outcome it can mean robust beyond the
-positive probe range, a required reduction beyond the 50% probe range, or no
-reading. The popup states those cases directly.
+Only server-classified measured projections produce pace percentages. Structural
+projections display “Early / structural estimate”; missing or unknown evidence
+withholds advice. Null headroom never means zero, ample capacity or a severe cut.
+A measured forecast with no percentage states whether it reaches its interval
+or may exhaust earlier, with “Pace margin unavailable” or “Required cut unavailable”.
+Exhaustion estimates with unreadable accounts are lower bounds on runway.
+
+Older servers without `nextReset`, or rows with a null/invalid deadline, show
+“Next-reset forecast unavailable” while keeping explicitly labelled long-term
+context. When a deadline passes, the applet marks it expired and requests an
+updated snapshot. It never advances a deadline or assumes quota has recovered.
+
+Paused accounts remain visible in account details. Workload forecasts and pacing
+use the server's active capacity; the applet neither averages account usage to
+calculate pace nor adds capacity for banked reset credits.
 
 Usage bars turn orange at 80% and red at 100%. Individual forecast confidence
 remains visible in the clicked details; low-confidence exhaustion is never
@@ -88,10 +111,22 @@ The applet uses Clankermux's unauthenticated, read-only public widget API:
 - `GET /public/v1/workload-headroom`
 
 Status and accounts follow the configured refresh interval, which defaults to
-30 seconds. Pace, runway, and workload projections refresh at most once per
-minute, or immediately with **Refresh now**. The server memoizes pacing and
-workload headroom for the same interval. These endpoints contain no personal
-identities, credential material, API-key metadata, or write access.
+30 seconds. Pace, runway, and workload projections refresh independently about
+once per minute, immediately after a new deadline expires, or with **Refresh now**.
+Failed forecast requests back off from two minutes to a five-minute cap. A
+successful cycle restores the minute cadence; manual refresh bypasses backoff.
+The server memoizes pacing and workload headroom for 60 seconds, so an early
+refresh may return the same computation.
+
+Forecasts become stale on a fetch failure, when their computation timestamp is
+missing, or when `generatedAt` is at least three minutes old. Fetching the same
+cached response does not make it fresh. The last reading and its computation
+timestamp stay in the details as historical context; stale workload bars are
+neutral. Computation time is distinct from each account's usage observation time.
+Countdowns and freshness update between network polls.
+
+These endpoints contain no personal identities, credential material, API-key
+metadata, or write access.
 
 ## Development
 

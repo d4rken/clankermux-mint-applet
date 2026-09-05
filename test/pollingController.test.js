@@ -100,3 +100,47 @@ test('restart and stop never remove an already-missing source ID', () => {
     assert.deepEqual(controller.sourceIds(), { pollId: 0, watchdogId: 0 });
     assert.equal(loop.invalidRemovals, 0);
 });
+
+
+test('forecast polling follows a minute cadence with capped backoff and recovery', () => {
+    const schedule = polling.createOutlookSchedule();
+    assert.equal(schedule.begin(0), true);
+    schedule.complete(0, false);
+    assert.equal(schedule.begin(59999), false);
+    assert.equal(schedule.begin(60000), true);
+    schedule.complete(60000, true);
+    assert.equal(schedule.begin(179999), false);
+    assert.equal(schedule.begin(180000), true);
+    schedule.complete(180000, true);
+    assert.equal(schedule.begin(419999), false);
+    assert.equal(schedule.begin(420000), true);
+    schedule.complete(420000, true);
+    assert.equal(schedule.begin(719999), false);
+    assert.equal(schedule.begin(720000), true);
+    schedule.complete(720000, true);
+    assert.equal(schedule.begin(1020000), true);
+    schedule.complete(1020000, false);
+    assert.equal(schedule.begin(1079999), false);
+    assert.equal(schedule.begin(1080000), true);
+});
+
+test('an expired deadline requests a fresh snapshot once and respects failure backoff', () => {
+    const schedule = polling.createOutlookSchedule();
+    schedule.begin(0);
+    schedule.complete(0, false);
+    assert.equal(schedule.begin(10000, false, 'class:codex:deadline1'), true);
+    schedule.complete(10000, false);
+    assert.equal(schedule.begin(11000, false, 'class:codex:deadline1'), false);
+    assert.equal(schedule.begin(12000, false, 'class:codex:deadline2'), true);
+    schedule.complete(12000, true);
+    assert.equal(schedule.begin(13000, false, 'class:codex:deadline3'), false);
+    assert.equal(schedule.begin(132000, false, 'class:codex:deadline3'), true);
+});
+
+test('manual refresh can bypass forecast backoff', () => {
+    const schedule = polling.createOutlookSchedule();
+    schedule.begin(0);
+    schedule.complete(0, true);
+    assert.equal(schedule.begin(1000), false);
+    assert.equal(schedule.begin(1000, true), true);
+});

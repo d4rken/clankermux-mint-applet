@@ -181,7 +181,27 @@ var PollingController = (() => {
         return { ensure, restart, sourceIds, start, stop };
     }
 
-    return { create };
+    function createOutlookSchedule() {
+        let nextAttemptAt = 0;
+        let failures = 0;
+        let lastExpiredKey = '';
+        return {
+            begin(nowMs, force = false, expiredKey = '') {
+                const newExpiry = expiredKey && expiredKey !== lastExpiredKey && failures === 0;
+                if (!force && !newExpiry && nowMs < nextAttemptAt)
+                    return false;
+                lastExpiredKey = expiredKey;
+                nextAttemptAt = nowMs + 60000;
+                return true;
+            },
+            complete(nowMs, failed) {
+                failures = failed ? Math.min(failures + 1, 4) : 0;
+                nextAttemptAt = nowMs + Math.min(300000, 60000 * Math.pow(2, failures));
+            },
+        };
+    }
+
+    return { create, createOutlookSchedule };
 })();
 
 if (typeof module !== 'undefined' && module.exports)

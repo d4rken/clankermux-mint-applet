@@ -50,7 +50,7 @@
     "max": 900,
     "step": 10,
     "units": "seconds",
-    "description": "Refresh every"
+    "description": "Refresh accounts and status every"
   },
   "request-timeout": {
     "type": "spinbutton",
@@ -73,7 +73,7 @@
   "show-panel-percentages": {
     "type": "switch",
     "default": false,
-    "description": "Show exact headroom beside workload bars"
+    "description": "Show measured pace percentages beside workload bars"
   },
   "runway-warning-hours": {
     "type": "spinbutton",
@@ -83,7 +83,7 @@
     "step": 1,
     "units": "hours",
     "description": "Warn in the popup when quota runway falls below",
-    "tooltip": "This affects the secondary runway detail. The panel headline follows pace headroom instead."
+    "tooltip": "This affects the secondary runway detail. The panel shows pace until the next weekly reset."
   },
   "show-scoped-limits": {
     "type": "switch",
