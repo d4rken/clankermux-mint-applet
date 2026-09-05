@@ -1,8 +1,8 @@
 {
   "name": "clankermux-usage-cinnamon-applet",
-  "version": "1.6.5",
+  "version": "2.1.0",
   "private": true,
-  "description": "Cinnamon panel applet for Clankermux pace headroom and account usage",
+  "description": "Cinnamon panel applet for Clankermux pace, quota runway, and account usage",
   "license": "GPL-3.0-only",
   "repository": {
     "type": "git",
