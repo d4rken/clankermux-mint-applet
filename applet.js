@@ -690,7 +690,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
     _forecastState() {
         return JSON.stringify([
             this._view?.pace.stale, this._view?.pacing.stale, this._view?.workloadHeadroom.stale,
-            (this._view?.paceRows || []).map(row => [row.key, row.stale, row.expired]),
+            (this._view?.paceRows || []).map(row => [row.key, row.source, row.stale, row.expired]),
         ]);
     }
 

@@ -175,6 +175,27 @@ test('stale transitions update an open popup even while the pointer is inside', 
     assert.equal(h.applet._view.workloads[1].stale, true);
 });
 
+test('a pacing deadline crossing with fresh headroom updates an open popup while the pointer is inside', () => {
+    const h = appletHarness();
+    const pacing = fixtures.pacing();
+    pacing.classes[0].resetsAt = new Date(fixtures.NOW + 10000).toISOString();
+    h.applet._refresh(false, true);
+    h.reply('/public/v1/runway', fixtures.runway());
+    h.reply('/public/v1/pacing', pacing);
+    h.reply('/public/v1/workload-headroom', fixtures.nextResetWorkloads());
+    assert.equal(h.applet._view.paceRows[0].source, 'pacing');
+    h.applet.menu.isOpen = true;
+    h.applet._menuPointerInside = true;
+    h.applet._menuSignature = h.applet._menuStateSignature();
+    let rebuilt = false;
+    h.applet._renderMenu = () => { rebuilt = true; };
+    h.advance(10000);
+    h.applet._render();
+    assert.equal(h.applet._view.paceRows[0].source, 'headroom');
+    assert.equal(h.applet._view.pacing.classes[0].expired, true);
+    assert.equal(rebuilt, true);
+});
+
 test('ordinary account polling stays available during forecast backoff', () => {
     const h = appletHarness();
     h.applet._outlookSchedule.begin(fixtures.NOW);
