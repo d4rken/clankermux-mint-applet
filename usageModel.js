@@ -514,10 +514,18 @@ var UsageModel = (() => {
                 raw?.headroomBasis === 'conservative_bound' ? 'bound' : 'other';
             const eligibleAccounts = nonNegativeCount(raw?.eligibleAccounts);
             const unreadableAccounts = nonNegativeCount(raw?.unreadableAccounts);
+            const unopenedAccounts = raw.dimensionKind === 'family'
+                ? Math.min(unreadableAccounts, nonNegativeCount(raw?.unopenedAccounts)) : 0;
+            const otherExcludedAccounts = unreadableAccounts - unopenedAccounts;
+            const label = String(raw.label || humanizeStatus(raw.dimensionId));
+            const unopenedText = unopenedAccounts
+                ? `${unopenedAccounts} ${unopenedAccounts === 1 ? 'account has' : 'accounts have'} not used ${label} this week` : '';
             const spentAccounts = nonNegativeCount(raw?.spentAccounts);
             const depth = [`${eligibleAccounts} eligible`];
-            if (unreadableAccounts)
-                depth.push(`${unreadableAccounts} unreadable`);
+            if (otherExcludedAccounts)
+                depth.push(`${otherExcludedAccounts} unreadable`);
+            if (unopenedAccounts)
+                depth.push(`${unopenedAccounts} unopened`);
             if (spentAccounts)
                 depth.push(`${spentAccounts} spent`);
             const longTerm = {
@@ -550,11 +558,12 @@ var UsageModel = (() => {
                 key: `${raw.dimensionKind}:${raw.dimensionId}`,
                 dimensionKind: raw.dimensionKind,
                 dimensionId: raw.dimensionId,
-                label: String(raw.label || humanizeStatus(raw.dimensionId)),
+                label,
                 basis,
                 basisLabel: basis === 'exact' ? 'Exact threshold' :
                     basis === 'bound' ? 'Conservative bound' : 'Unknown basis',
-                eligibleAccounts, unreadableAccounts, spentAccounts,
+                eligibleAccounts, unreadableAccounts, unopenedAccounts, otherExcludedAccounts, spentAccounts,
+                unopenedText,
                 incomplete: unreadableAccounts > 0,
                 depthText: depth.join(' · '),
                 coverageCaveat: unreadableAccounts > 0
@@ -702,8 +711,8 @@ var UsageModel = (() => {
             String(row.summary || '').split('\n')[0],
             row.basis === 'bound' ? 'conservative bound' : '',
             row.resetsAt ? `resets ${formatReset(row.resetsAt, localNowMs)}` : '',
-            row.unreadableAccounts ? `${row.unreadableAccounts} unreadable` : '',
-        ].filter(Boolean).join(' · ');
+            row.otherExcludedAccounts ? `${row.otherExcludedAccounts} unreadable` : '',
+        ].filter(Boolean).join(' · ') + (row.unopenedText ? `\n${row.unopenedText}` : '');
     }
 
     function _paceRows(pacingNow, workloadNow, localNowMs) {

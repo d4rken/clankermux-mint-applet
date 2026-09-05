@@ -52,6 +52,10 @@ Only server-classified measured projections produce headroom percentages;
 structural estimates are marked early and stay grey, and missing or unknown
 evidence withholds advice altogether. Exhaustion estimates with unreadable
 accounts are lower bounds on runway.
+Family coverage distinguishes accounts that have not used the family this week
+from other unreadable accounts. Both remain excluded from the projection;
+untouched accounts do not imply a 0% usage reading. Older servers without
+`unopenedAccounts` retain the combined unreadable count.
 
 Older servers without `nextReset`, or rows with a null or invalid deadline,
 report no reading instead of a guess. When a deadline passes, the applet marks

@@ -655,6 +655,66 @@ test('long-term absence reasons do not leak into the next-reset interpretation',
     assert.match(row.coverageCaveat, /lower bounds on runway/);
 });
 
+test('unopened family accounts are explained without adding modeled capacity or usage readings', () => {
+    const response = fixtures.nextResetWorkloads();
+    const build = () => model.buildView(
+        fixtures.accounts(), fixtures.status(), fixtures.runway(), fixtures.pacing(), response, {}, NOW
+    );
+    Object.assign(response.rows[2], { eligibleAccounts: 5, unreadableAccounts: 1, unopenedAccounts: 0 });
+    const before = build();
+    response.rows[2].unopenedAccounts = 1;
+    const after = build();
+    const row = model.workloadHeadroomView(response, NOW).rows[2];
+    assert.equal(row.eligibleAccounts - row.unreadableAccounts, 4);
+    assert.equal(row.unopenedAccounts, 1);
+    assert.equal(row.otherExcludedAccounts, 0);
+    assert.equal(row.depthText, '5 eligible · 1 unopened · 1 spent');
+    assert.equal(row.incomplete, true);
+    assert.match(row.coverageCaveat, /lower bounds on runway/);
+    const pace = after.paceRows.find(item => item.key === 'family:fable');
+    assert.match(pace.detail, /\n1 account has not used Fable this week$/);
+    assert.doesNotMatch(pace.detail, /unreadable|0%/);
+    assert.deepEqual({ ...pace, detail: '' }, {
+        ...before.paceRows.find(item => item.key === 'family:fable'), detail: '',
+    });
+    assert.deepEqual(after.accounts, before.accounts);
+});
+
+test('mixed family exclusions split unopened accounts from other unreadable accounts', () => {
+    const response = fixtures.nextResetWorkloads();
+    Object.assign(response.rows[2], { eligibleAccounts: 5, unreadableAccounts: 3, unopenedAccounts: 2 });
+    const row = model.workloadHeadroomView(response, NOW).rows[2];
+    assert.equal(row.eligibleAccounts - row.unreadableAccounts, 2);
+    assert.equal(row.otherExcludedAccounts, 1);
+    assert.equal(row.depthText, '5 eligible · 1 unreadable · 2 unopened · 1 spent');
+    const view = model.buildView(
+        fixtures.accounts(), fixtures.status(), fixtures.runway(), fixtures.pacing(), response, {}, NOW
+    );
+    assert.match(view.paceRows.find(item => item.key === 'family:fable').detail,
+        /1 unreadable\n2 accounts have not used Fable this week$/);
+});
+
+test('missing or invalid unopened counts preserve coverage and cannot exceed unreadable counts', () => {
+    for (const [unopenedAccounts, expected] of [[undefined, 0], [null, 0], [-1, 0], ['invalid', 0], [Infinity, 0], [9, 1]]) {
+        const response = fixtures.nextResetWorkloads();
+        response.rows[2].unopenedAccounts = unopenedAccounts;
+        const row = model.workloadHeadroomView(response, NOW).rows[2];
+        assert.equal(row.unopenedAccounts, expected);
+        assert.equal(row.otherExcludedAccounts, 1 - expected);
+        assert.equal(row.unreadableAccounts, 1);
+        assert.equal(row.incomplete, true);
+        if (!expected) {
+            assert.equal(row.depthText, '2 eligible · 1 unreadable · 1 spent');
+            assert.equal(row.unopenedText, '');
+        }
+    }
+    const response = fixtures.nextResetWorkloads();
+    Object.assign(response.rows[0], { unreadableAccounts: 1, unopenedAccounts: 1 });
+    const row = model.workloadHeadroomView(response, NOW).rows[0];
+    assert.equal(row.unopenedAccounts, 0);
+    assert.equal(row.otherExcludedAccounts, 1);
+});
+
 test('unrecognized outcomes stay neutral while no_accounts and out_now have distinct meanings', () => {
     for (const outcomeKind of ['unknown', 'other', 'future-kind', 'no_accounts', 'out_now']) {
         const response = fixtures.nextResetWorkloads();
