@@ -240,9 +240,10 @@ test('maps exact classes and conservative family bounds without conflating them'
         [
             ['Claude', '+30%', 'exact', false],
             ['GPT', '+41%', 'exact', false],
-            ['Fable', '–', 'bound', true],
+            ['Fable', 'plenty', 'bound', true],
         ]
     );
+    assert.equal(rows[2].longTerm.severity, 'unknown');
     assert.equal(rows[2].depthText, '2 eligible · 1 unreadable · 1 spent');
     assert.equal(rows[2].longTerm.projectionLabel, 'Early / structural estimate');
 });
@@ -271,16 +272,26 @@ test('structural evidence takes priority over long-term headroom absence reasons
         eligibleAccounts: 2, unreadableAccounts: 0, spentAccounts: 0,
     };
     const cases = [
-        [{ outcomeKind: 'beyond_horizon', headroomAbsence: 'beyond_probe_range' }, 'EARLY'],
-        [{ outcomeKind: 'runway', headroomAbsence: 'beyond_probe_range' }, 'EARLY'],
-        [{ outcomeKind: 'runway', headroomAbsence: 'bound_broken_by_credits' }, 'EARLY'],
+        [{ outcomeKind: 'beyond_horizon', headroomAbsence: 'beyond_probe_range' }, 'PLENTY'],
+        [{ outcomeKind: 'runway', headroomAbsence: 'beyond_probe_range' }, 'CUT HARD'],
+        [{ outcomeKind: 'runway', headroomAbsence: 'bound_broken_by_credits' }, 'CUT HARD'],
         [{ outcomeKind: 'unknown', headroomAbsence: 'not_projected' }, 'NO READING'],
-        [{ outcomeKind: 'beyond_horizon', headroomAbsence: 'other' }, 'EARLY'],
+        [{ outcomeKind: 'beyond_horizon', headroomAbsence: 'other' }, 'PLENTY'],
     ];
     for (const [fields, expected] of cases) {
         const response = fixtures.workloadHeadroom({ rows: [{ ...base, ...fields }] });
-        assert.equal(model.workloadHeadroomView(response, NOW, NOW).rows[0].longTerm.action, expected);
+        const forecast = model.workloadHeadroomView(response, NOW, NOW).rows[0].longTerm;
+        assert.equal(forecast.action, expected);
+        if (expected !== 'NO READING')
+            assert.equal(forecast.severity, 'unknown');
     }
+    const outNow = fixtures.workloadHeadroom({
+        rows: [{ ...base, outcomeKind: 'out_now', headroomAbsence: 'beyond_probe_range' }],
+    });
+    const exhausted = model.workloadHeadroomView(outNow, NOW, NOW).rows[0].longTerm;
+    assert.equal(exhausted.action, 'OUT');
+    assert.equal(exhausted.severity, 'critical');
+    assert.doesNotMatch(exhausted.summary, /early estimate/);
 });
 
 test('fails closed when a workload headroom basis is unknown', () => {
@@ -332,7 +343,10 @@ test('keeps workload state words off the compact panel', () => {
     const [exceptional] = model.workloadHeadroomView(response, NOW, NOW).rows;
     assert.equal(exceptional.side, 'none');
     assert.equal(exceptional.fillPercent, 0);
-    assert.equal(exceptional.longTerm.action, 'EARLY');
+    assert.equal(exceptional.longTerm.action, 'CUT HARD');
+    assert.equal(exceptional.longTerm.side, 'left');
+    assert.equal(exceptional.longTerm.fillPercent, 100);
+    assert.equal(exceptional.longTerm.severity, 'unknown');
     assert.equal(model.panelWorkloadLabel(exceptional), '');
     assert.equal(model.panelWorkloadLabel(exceptional, true), '');
     assert.equal(model.panelWorkloadLabel({
@@ -366,6 +380,88 @@ test('keeps the pool five-hour tone separate from unread class measurements', ()
     assert.equal(view.fiveHourSeverity, 'critical');
     assert.equal(view.classes[1].fiveHour.unread, true);
     assert.equal(view.classes[1].fiveHour.severity, 'unknown');
+});
+
+test('derives class pace from the burn ratio', () => {
+    const view = model.pacingView(fixtures.pacing(), fixtures.accounts(), NOW, NOW);
+    const claude = view.classes[0].pace;
+    assert.deepEqual(
+        [claude.action, claude.valueText, claude.side, claude.fillPercent, claude.severity],
+        ['CUT', '−7%', 'left', 14, 'warning']
+    );
+    assert.equal(view.classes[0].usable, true);
+    assert.equal(view.classes[1].pace.action, 'NO READING');
+    assert.equal(view.classes[1].usable, false);
+
+    const cases = [
+        [{ burnRatio: 0, burnTone: 'success' }, ['IDLE', 'idle', 'right', 100, 'normal']],
+        [{ burnRatio: 0.5, burnTone: null }, ['ROOM', '+100%', 'right', 100, 'normal']],
+        [{ burnRatio: 2, burnTone: 'destructive' }, ['CUT', '−50%', 'left', 100, 'critical']],
+        [{ burnRatio: 1.5, burnTone: null }, ['CUT', '−33%', 'left', 66, 'warning']],
+        [{ burnRatio: 1 }, ['HOLD', '±0%', 'none', 0, 'normal']],
+    ];
+    for (const [item, expected] of cases) {
+        const signal = model.classPaceSignal(item);
+        assert.deepEqual(
+            [signal.action, signal.valueText, signal.side, signal.fillPercent, signal.severity],
+            expected
+        );
+    }
+
+    const stale = model.pacingView(
+        fixtures.pacing({ generatedAt: new Date(NOW - 240000).toISOString() }),
+        fixtures.accounts(), NOW, NOW
+    );
+    assert.equal(stale.classes[0].pace.action, 'STALE');
+    assert.equal(stale.classes[0].pace.valueText, 'Stale');
+    assert.equal(stale.classes[0].usable, false);
+
+    const response = fixtures.pacing();
+    response.classes[0].resetsAt = new Date(NOW - 1000).toISOString();
+    const expired = model.pacingView(response, fixtures.accounts(), NOW, NOW);
+    assert.equal(expired.classes[0].pace.action, 'EXPIRED');
+    assert.equal(expired.classes[0].expired, true);
+    assert.equal(expired.classes[0].usable, false);
+});
+
+test('panel pace rows come from class pacing and fall back to workload headroom', () => {
+    const build = (pacing, workloads, options = {}) => model.buildView(
+        fixtures.accounts(), fixtures.status(), fixtures.runway(), pacing, workloads, options, NOW
+    );
+    const view = build(fixtures.pacing(), fixtures.nextResetWorkloads());
+    assert.deepEqual(view.paceRows.map(row => [row.key, row.source]), [
+        ['class:anthropic', 'pacing'],
+        ['class:codex', 'headroom'],
+        ['family:fable', 'headroom'],
+    ]);
+    assert.equal(view.paceRows[1].valueText, '+25%');
+    assert.equal(view.paceRows[0].binding, false);
+    assert.equal(view.paceRows[1].binding, true);
+    assert.match(
+        view.paceRows[0].detail,
+        /1\.08× sustainable pace · 47% used \(least-used\) · 2 of 2 hit 100% by reset · resets in/
+    );
+    assert.match(view.paceRows[2].detail, /early estimate · conservative bound · resets in/);
+
+    assert.deepEqual(
+        build(null, fixtures.nextResetWorkloads()).paceRows.map(row => row.source),
+        ['headroom', 'headroom', 'headroom']
+    );
+
+    const stalePacing = fixtures.pacing({ generatedAt: new Date(NOW - 240000).toISOString() });
+    assert.deepEqual(
+        build(stalePacing, fixtures.nextResetWorkloads()).paceRows.map(row => row.source),
+        ['headroom', 'headroom', 'headroom']
+    );
+    assert.deepEqual(
+        build(stalePacing, null).paceRows.map(row => [row.source, row.action]),
+        [['pacing', 'STALE'], ['pacing', 'STALE']]
+    );
+    assert.equal(
+        build(fixtures.pacing(), fixtures.nextResetWorkloads(), { showScoped: false })
+            .paceRows.some(row => row.kind === 'family'),
+        false
+    );
 });
 
 test('finite runway becomes the compact panel headline and resolves its cause', () => {
@@ -504,18 +600,24 @@ test('both intervals withhold advice without measured evidence', () => {
             Object.assign(response.rows[1], { projectionBasis, headroomPct });
             Object.assign(response.rows[1].nextReset, { projectionBasis, headroomPct });
             const row = model.workloadHeadroomView(response, NOW).rows[1];
-            for (const forecast of [row, row.longTerm]) {
+            const structural = projectionBasis === 'structural';
+            for (const [forecast, side] of [[row, 'right'], [row.longTerm, 'left']]) {
                 assert.equal(forecast.percent, null);
-                assert.equal(forecast.side, 'none');
-                assert.equal(forecast.fillPercent, 0);
-                assert.match(forecast.summary, projectionBasis === 'structural' ? /Early \/ structural/ : /Evidence unavailable/);
+                assert.equal(forecast.side, structural ? side : 'none');
+                assert.equal(forecast.fillPercent, structural ? 100 : 0);
+                assert.equal(forecast.severity, 'unknown');
+                assert.match(forecast.summary, structural ? /early estimate/ : /Evidence unavailable/);
             }
         }
     }
 });
 
-test('measured null headroom states the outcome without extreme bars or zero substitution', () => {
-    for (const outcomeKind of ['runway', 'beyond_horizon']) {
+test('measured null headroom fills the bar to scale in the outcome direction', () => {
+    const cases = [
+        ['runway', 'CUT HARD', 'left', 'warning', /May exhaust before/],
+        ['beyond_horizon', 'PLENTY', 'right', 'normal', /Reaches/],
+    ];
+    for (const [outcomeKind, action, side, severity, pattern] of cases) {
         const response = fixtures.nextResetWorkloads();
         const fields = {
             headroomPct: null, headroomDirection: null, outcomeKind,
@@ -525,10 +627,12 @@ test('measured null headroom states the outcome without extreme bars or zero sub
         Object.assign(response.rows[1].nextReset, fields);
         const row = model.workloadHeadroomView(response, NOW).rows[1];
         for (const forecast of [row, row.longTerm]) {
+            assert.equal(forecast.action, action);
+            assert.equal(forecast.side, side);
+            assert.equal(forecast.fillPercent, 100);
+            assert.equal(forecast.severity, severity);
             assert.equal(forecast.percent, null);
-            assert.equal(forecast.fillPercent, 0);
-            assert.equal(forecast.side, 'none');
-            assert.match(forecast.summary, outcomeKind === 'runway' ? /Required cut unavailable/ : /Pace margin unavailable/);
+            assert.match(forecast.summary, pattern);
             if (outcomeKind === 'runway')
                 assert.match(forecast.summary, /Projected exhaustion:/);
         }
@@ -546,7 +650,7 @@ test('long-term absence reasons do not leak into the next-reset interpretation',
     const row = model.workloadHeadroomView(response, NOW).rows[2];
     assert.equal(row.valueText, '≥+25%');
     assert.match(row.summary, /conservative bound/);
-    assert.match(row.longTerm.summary, /Pace margin unavailable/);
+    assert.match(row.longTerm.summary, /Reaches the stated model horizon/);
     assert.equal(row.depthText, '2 eligible · 1 unreadable · 1 spent');
     assert.match(row.coverageCaveat, /lower bounds on runway/);
 });

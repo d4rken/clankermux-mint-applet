@@ -329,6 +329,15 @@ var UsageModel = (() => {
             return _neutralSignal('No active accounts for this workload', 'NO ACCOUNTS');
         if (!['beyond_horizon', 'runway', 'out_now'].includes(kind))
             return _neutralSignal('Forecast unavailable');
+        let structural = false;
+        if (options.requireMeasured) {
+            if (!['measured', 'structural'].includes(options.projectionBasis))
+                return _neutralSignal('Evidence unavailable');
+            if (options.projectionBasis === 'structural') {
+                structural = true;
+                rawPercent = null;
+            }
+        }
         if (kind === 'out_now') {
             return {
                 action: 'OUT', valueText: 'OUT', side: 'left', fillPercent: 100,
@@ -336,11 +345,9 @@ var UsageModel = (() => {
                 summary: 'Available modeled capacity exhausted',
             };
         }
-        if (options.requireMeasured && options.projectionBasis !== 'measured') {
-            return options.projectionBasis === 'structural'
-                ? _neutralSignal('Early / structural estimate', 'EARLY')
-                : _neutralSignal('Evidence unavailable');
-        }
+        const qualify = signal => structural
+            ? { ...signal, severity: 'unknown', summary: `${signal.summary} · early estimate` }
+            : signal;
         const basis = options.basis || 'exact';
         if (options.requireKnownBasis && !['exact', 'bound'].includes(basis))
             return _neutralSignal('Headroom basis is not recognized');
@@ -351,29 +358,76 @@ var UsageModel = (() => {
         const percent = percentValue === null ? null : Math.round(percentValue);
         const bound = basis === 'bound';
         if (percent !== null && direction === 'margin' && kind === 'beyond_horizon') {
-            return {
+            return qualify({
                 action: 'ROOM', valueText: `${bound ? '≥' : ''}+${percent}%`,
                 side: 'right', fillPercent: Math.min(100, percent * 2),
                 severity: 'normal', percent, direction: 'margin',
                 summary: bound ? `At least ${percent}% pace margin (conservative bound)` : `${percent}% pace margin`,
-            };
+            });
         }
         if (percent !== null && direction === 'deficit' && kind === 'runway') {
-            return {
+            return qualify({
                 action: 'CUT', valueText: bound ? `−${percent}% bound` : `−${percent}%`,
                 side: 'left', fillPercent: Math.min(100, percent * 2),
                 severity: 'warning', percent, direction: 'deficit',
                 summary: bound
                     ? `Conservative cut: ${percent}% if this burn continues`
                     : `Reduce pace by ${percent}% if this burn continues`,
-            };
+            });
         }
         if (rawPercent != null || (direction && !['margin', 'deficit'].includes(direction)))
             return _neutralSignal('Headroom value, direction or outcome is not recognized');
         const interval = options.nextReset ? 'next reset' : 'the stated model horizon';
-        return kind === 'beyond_horizon'
-            ? _neutralSignal(`Projected to reach ${interval} · Pace margin unavailable`, 'REACHES HORIZON')
+        if (kind === 'beyond_horizon') {
+            return options.requireMeasured
+                ? qualify({
+                    action: 'PLENTY', valueText: 'plenty', side: 'right', fillPercent: 100,
+                    severity: 'normal', percent: null, direction: null,
+                    summary: `Reaches ${interval}`,
+                })
+                : _neutralSignal(`Projected to reach ${interval} · Pace margin unavailable`, 'REACHES HORIZON');
+        }
+        return options.requireMeasured
+            ? qualify({
+                action: 'CUT HARD', valueText: 'cut hard', side: 'left', fillPercent: 100,
+                severity: 'warning', percent: null, direction: null,
+                summary: `May exhaust before ${interval}`,
+            })
             : _neutralSignal(`May exhaust before ${interval} · Required cut unavailable`, 'MAY EXHAUST');
+    }
+
+    function classPaceSignal(item) {
+        const ratio = finiteNumber(item?.burnRatio);
+        if (ratio === null || ratio < 0)
+            return _neutralSignal('Burn pace not stated');
+        const tone = item?.burnTone == null ? null : toneSeverity(item.burnTone);
+        const severity = tone === null ? ratio > 1 ? 'warning' : 'normal' : tone;
+        if (ratio === 0) {
+            return {
+                action: 'IDLE', valueText: 'idle', side: 'right', fillPercent: 100,
+                severity, percent: null, direction: null, summary: 'No measured burn',
+            };
+        }
+        if (ratio < 1) {
+            const margin = Math.round((1 / ratio - 1) * 100);
+            return {
+                action: 'ROOM', valueText: `+${margin}%`, side: 'right',
+                fillPercent: Math.min(100, margin * 2), severity, percent: margin,
+                direction: 'margin', summary: `Burn can rise ${margin}% and stay sustainable`,
+            };
+        }
+        const cut = Math.round((1 - 1 / ratio) * 100);
+        if (cut === 0) {
+            return {
+                action: 'HOLD', valueText: '±0%', side: 'none', fillPercent: 0,
+                severity, percent: 0, direction: 'deficit', summary: 'Burn is exactly sustainable',
+            };
+        }
+        return {
+            action: 'CUT', valueText: `−${cut}%`, side: 'left',
+            fillPercent: Math.min(100, cut * 2), severity, percent: cut,
+            direction: 'deficit', summary: `Cut burn ${cut}% to stay sustainable`,
+        };
     }
 
     function _runwayCoverage(runway) {
@@ -567,15 +621,27 @@ var UsageModel = (() => {
                 if (unknown)
                     fiveHourParts.push(`${unknown} unknown`);
             }
+            const burnRatio = finiteNumber(raw?.burnRatio);
+            const resetsMs = timestampMs(raw?.resetsAt);
+            const expired = resetsMs !== null && resetsMs <= localNowMs;
+            let pace = classPaceSignal({ burnRatio: raw?.burnRatio, burnTone: raw?.burnTone });
+            if (expired)
+                pace = _neutralSignal('Next-reset forecast expired', 'EXPIRED');
+            if (freshness.stale)
+                pace = _staleSignal(pace);
             classes.push({
                 key: classId,
                 classId,
+                pace,
+                stale: freshness.stale,
+                expired,
+                usable: !freshness.stale && !expired && burnRatio !== null && burnRatio >= 0,
                 label: String(raw?.label || humanizeStatus(classId)),
                 binding: classId === bindingClassId,
                 utilizationPct: clampPercent(raw?.utilizationPct),
                 leastUsedAccountId: raw?.leastUsedAccountId || null,
                 leastUsedAccountName: _accountName(raw?.leastUsedAccountId, accounts),
-                burnRatio: finiteNumber(raw?.burnRatio),
+                burnRatio,
                 burnText: _burnRatioText(raw?.burnRatio),
                 burnSeverity: freshness.stale || raw?.burnTone == null ? 'unknown' : toneSeverity(raw.burnTone),
                 outlookTone: String(raw?.outlookTone || 'other'),
@@ -606,6 +672,82 @@ var UsageModel = (() => {
             ...freshness,
             available: Boolean(payload),
         };
+    }
+
+    function _paceRowSignal(signal) {
+        return {
+            action: signal.action,
+            valueText: signal.valueText,
+            side: signal.side,
+            fillPercent: signal.fillPercent,
+            severity: signal.severity,
+            percent: signal.percent,
+            direction: signal.direction,
+            summary: signal.summary,
+        };
+    }
+
+    function _pacingDetail(item, localNowMs) {
+        return [
+            item.burnText,
+            item.utilizationPct === null ? 'weekly usage unknown' : `${item.utilizationPct}% used (least-used)`,
+            item.willRunOut ? `${item.willRunOut} of ${item.eligibleTotal} hit 100% by reset` : '',
+            item.singlePointOfFailure ? 'no failover' : '',
+            item.resetsAt ? `resets ${formatReset(item.resetsAt, localNowMs)}` : '',
+        ].filter(Boolean).join(' · ');
+    }
+
+    function _headroomDetail(row, localNowMs) {
+        return [
+            String(row.summary || '').split('\n')[0],
+            row.basis === 'bound' ? 'conservative bound' : '',
+            row.resetsAt ? `resets ${formatReset(row.resetsAt, localNowMs)}` : '',
+            row.unreadableAccounts ? `${row.unreadableAccounts} unreadable` : '',
+        ].filter(Boolean).join(' · ');
+    }
+
+    function _paceRows(pacingNow, workloadNow, localNowMs) {
+        const rows = [];
+        const pacedClassIds = new Set();
+        for (const item of pacingNow.classes) {
+            pacedClassIds.add(item.classId);
+            const headroomRow = workloadNow.rows.find(
+                row => row.dimensionKind === 'class' && row.dimensionId === item.classId
+            );
+            const useHeadroom = !item.usable && Boolean(headroomRow) &&
+                !headroomRow.stale && !headroomRow.expired;
+            rows.push({
+                key: `class:${item.classId}`,
+                kind: 'class',
+                label: item.label,
+                binding: item.binding,
+                source: useHeadroom ? 'headroom' : 'pacing',
+                ..._paceRowSignal(useHeadroom ? headroomRow : item.pace),
+                stale: useHeadroom ? headroomRow.stale : item.stale,
+                expired: useHeadroom ? headroomRow.expired : item.expired,
+                resetsAt: useHeadroom ? headroomRow.resetsAt : item.resetsAt,
+                detail: useHeadroom
+                    ? _headroomDetail(headroomRow, localNowMs)
+                    : _pacingDetail(item, localNowMs),
+            });
+        }
+        for (const row of workloadNow.rows) {
+            if (row.dimensionKind === 'class' && pacedClassIds.has(row.dimensionId))
+                continue;
+            rows.push({
+                key: row.key,
+                kind: row.dimensionKind,
+                label: row.label,
+                binding: false,
+                source: 'headroom',
+                ..._paceRowSignal(row),
+                stale: row.stale,
+                expired: row.expired,
+                resetsAt: row.resetsAt,
+                detail: _headroomDetail(row, localNowMs),
+            });
+        }
+        return rows;
     }
 
     function _runwayCauseLabel(cause, accounts) {
@@ -769,6 +911,7 @@ var UsageModel = (() => {
         );
         if (options.showScoped === false)
             workloadNow.rows = workloadNow.rows.filter(row => row.dimensionKind !== 'family');
+        const paceRows = _paceRows(pacingNow, workloadNow, localNowMs);
 
         return {
             nowMs,
@@ -776,6 +919,7 @@ var UsageModel = (() => {
             usagePools: pools,
             providerOverloads: overloads,
             pace: paceNow,
+            paceRows,
             pacing: pacingNow,
             runway: runwayNow,
             workloads: workloadNow.rows,
@@ -834,6 +978,7 @@ var UsageModel = (() => {
         anchoredNow,
         buildView,
         clampPercent,
+        classPaceSignal,
         createRefreshCycle,
         credentialNotice,
         forecastFreshness,
