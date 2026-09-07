@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "devtools@claude-code-cafe": false,
+    "devtools@clanker-cafe": true
+  }
+}
