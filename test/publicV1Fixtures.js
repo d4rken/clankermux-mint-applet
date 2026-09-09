@@ -248,6 +248,7 @@ function workloadHeadroom(overrides = {}) {
     return {
         schema: 'clankermux.public.workload-headroom.v1',
         generatedAt: NOW_ISO,
+        intervalKind: 'fixed_horizon',
         horizonMs: 14 * 24 * 60 * 60 * 1000,
         rows: [
             {
@@ -261,6 +262,8 @@ function workloadHeadroom(overrides = {}) {
                 headroomBasis: 'exact',
                 headroomAbsence: null,
                 projectionBasis: 'measured',
+                guidanceState: 'increase',
+                learningAccounts: 0,
                 eligibleAccounts: 2,
                 unreadableAccounts: 0,
                 spentAccounts: 0,
@@ -276,6 +279,8 @@ function workloadHeadroom(overrides = {}) {
                 headroomBasis: 'exact',
                 headroomAbsence: null,
                 projectionBasis: 'measured',
+                guidanceState: 'increase',
+                learningAccounts: 0,
                 eligibleAccounts: 1,
                 unreadableAccounts: 0,
                 spentAccounts: 0,
@@ -291,6 +296,8 @@ function workloadHeadroom(overrides = {}) {
                 headroomBasis: 'conservative_bound',
                 headroomAbsence: null,
                 projectionBasis: 'structural',
+                guidanceState: 'uncertain',
+                learningAccounts: 0,
                 eligibleAccounts: 2,
                 unreadableAccounts: 1,
                 spentAccounts: 1,
@@ -305,6 +312,9 @@ function nextResetWorkloads(overrides = {}) {
     response.rows = response.rows.map(row => ({
         ...row,
         nextReset: {
+            intervalKind: 'until_next_weekly_reset',
+            guidanceState: row.guidanceState,
+            headroomAbsence: null,
             resetsAt: '2026-08-25T12:00:00.000Z',
             outcomeKind: 'beyond_horizon', exhaustsAt: null,
             headroomPct: 25, headroomDirection: 'margin',
@@ -313,6 +323,7 @@ function nextResetWorkloads(overrides = {}) {
     }));
     response.rows[1] = {
         ...response.rows[1],
+        guidanceState: 'reduce',
         outcomeKind: 'runway', headroomPct: 40, headroomDirection: 'deficit',
         exhaustsAt: '2026-08-29T12:00:00.000Z',
     };

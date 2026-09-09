@@ -2,6 +2,11 @@
 
 var UsageModel = (() => {
     const DEFAULT_USAGE_WARNING_PCT = 80;
+    const WORKLOAD_TARGETS = [
+        { key: 'class:codex', label: 'GPT', icon: 'openai' },
+        { key: 'class:anthropic', label: 'Claude', icon: 'anthropic' },
+        { key: 'family:fable', label: 'Fable', icon: 'fable' },
+    ];
 
     function clampNumber(value) {
         if (value === null || value === undefined || value === '')
@@ -323,21 +328,12 @@ var UsageModel = (() => {
         };
     }
 
-    function _paceSignal(outcomeKind, rawPercent, rawDirection, options = {}) {
+    function _paceSignal(outcomeKind, rawPercent, rawDirection) {
         const kind = String(outcomeKind || 'unknown');
         if (kind === 'no_accounts')
             return _neutralSignal('No active accounts for this workload', 'NO ACCOUNTS');
         if (!['beyond_horizon', 'runway', 'out_now'].includes(kind))
             return _neutralSignal('Forecast unavailable');
-        let structural = false;
-        if (options.requireMeasured) {
-            if (!['measured', 'structural'].includes(options.projectionBasis))
-                return _neutralSignal('Evidence unavailable');
-            if (options.projectionBasis === 'structural') {
-                structural = true;
-                rawPercent = null;
-            }
-        }
         if (kind === 'out_now') {
             return {
                 action: 'OUT', valueText: 'OUT', side: 'left', fillPercent: 100,
@@ -345,89 +341,28 @@ var UsageModel = (() => {
                 summary: 'Available modeled capacity exhausted',
             };
         }
-        const qualify = signal => structural
-            ? { ...signal, severity: 'unknown', summary: `${signal.summary} · early estimate` }
-            : signal;
-        const basis = options.basis || 'exact';
-        if (options.requireKnownBasis && !['exact', 'bound'].includes(basis))
-            return _neutralSignal('Headroom basis is not recognized');
-
         const direction = String(rawDirection || '');
-        const percentValue = typeof rawPercent === 'number' && Number.isFinite(rawPercent) && rawPercent >= 0
-            ? rawPercent : null;
-        const percent = percentValue === null ? null : Math.round(percentValue);
-        const bound = basis === 'bound';
+        const percent = typeof rawPercent === 'number' && Number.isFinite(rawPercent) && rawPercent >= 0
+            ? Math.round(rawPercent) : null;
         if (percent !== null && direction === 'margin' && kind === 'beyond_horizon') {
-            return qualify({
-                action: 'ROOM', valueText: `${bound ? '≥' : ''}+${percent}%`,
-                side: 'right', fillPercent: Math.min(100, percent * 2),
-                severity: 'normal', percent, direction: 'margin',
-                summary: bound ? `At least ${percent}% pace margin (conservative bound)` : `${percent}% pace margin`,
-            });
+            return {
+                action: 'ROOM', valueText: `+${percent}%`, side: 'right',
+                fillPercent: Math.min(100, percent * 2), severity: 'normal', percent, direction,
+                summary: `${percent}% pace margin`,
+            };
         }
         if (percent !== null && direction === 'deficit' && kind === 'runway') {
-            return qualify({
-                action: 'CUT', valueText: bound ? `−${percent}% bound` : `−${percent}%`,
-                side: 'left', fillPercent: Math.min(100, percent * 2),
-                severity: 'warning', percent, direction: 'deficit',
-                summary: bound
-                    ? `Conservative cut: ${percent}% if this burn continues`
-                    : `Reduce pace by ${percent}% if this burn continues`,
-            });
+            return {
+                action: 'CUT', valueText: `−${percent}%`, side: 'left',
+                fillPercent: Math.min(100, percent * 2), severity: 'warning', percent, direction,
+                summary: `Reduce pace by ${percent}% if this burn continues`,
+            };
         }
         if (rawPercent != null || (direction && !['margin', 'deficit'].includes(direction)))
             return _neutralSignal('Headroom value, direction or outcome is not recognized');
-        const interval = options.nextReset ? 'next reset' : 'the stated model horizon';
-        if (kind === 'beyond_horizon') {
-            return options.requireMeasured
-                ? qualify({
-                    action: 'PLENTY', valueText: 'plenty', side: 'right', fillPercent: 100,
-                    severity: 'normal', percent: null, direction: null,
-                    summary: `Reaches ${interval}`,
-                })
-                : _neutralSignal(`Projected to reach ${interval} · Pace margin unavailable`, 'REACHES HORIZON');
-        }
-        return options.requireMeasured
-            ? qualify({
-                action: 'CUT HARD', valueText: 'cut hard', side: 'left', fillPercent: 100,
-                severity: 'warning', percent: null, direction: null,
-                summary: `May exhaust before ${interval}`,
-            })
-            : _neutralSignal(`May exhaust before ${interval} · Required cut unavailable`, 'MAY EXHAUST');
-    }
-
-    function classPaceSignal(item) {
-        const ratio = finiteNumber(item?.burnRatio);
-        if (ratio === null || ratio < 0)
-            return _neutralSignal('Burn pace not stated');
-        const tone = item?.burnTone == null ? null : toneSeverity(item.burnTone);
-        const severity = tone === null ? ratio > 1 ? 'warning' : 'normal' : tone;
-        if (ratio === 0) {
-            return {
-                action: 'IDLE', valueText: 'idle', side: 'right', fillPercent: 100,
-                severity, percent: null, direction: null, summary: 'No measured burn',
-            };
-        }
-        if (ratio < 1) {
-            const margin = Math.round((1 / ratio - 1) * 100);
-            return {
-                action: 'ROOM', valueText: `+${margin}%`, side: 'right',
-                fillPercent: Math.min(100, margin * 2), severity, percent: margin,
-                direction: 'margin', summary: `Burn can rise ${margin}% and stay sustainable`,
-            };
-        }
-        const cut = Math.round((1 - 1 / ratio) * 100);
-        if (cut === 0) {
-            return {
-                action: 'HOLD', valueText: '±0%', side: 'none', fillPercent: 0,
-                severity, percent: 0, direction: 'deficit', summary: 'Burn is exactly sustainable',
-            };
-        }
-        return {
-            action: 'CUT', valueText: `−${cut}%`, side: 'left',
-            fillPercent: Math.min(100, cut * 2), severity, percent: cut,
-            direction: 'deficit', summary: `Cut burn ${cut}% to stay sustainable`,
-        };
+        return kind === 'beyond_horizon'
+            ? _neutralSignal('Projected to reach the stated model horizon · Pace margin unavailable', 'REACHES HORIZON')
+            : _neutralSignal('May exhaust before the stated model horizon · Required cut unavailable', 'MAY EXHAUST');
     }
 
     function _runwayCoverage(runway) {
@@ -478,25 +413,89 @@ var UsageModel = (() => {
         };
     }
 
-    function _workloadForecast(raw, basis, nextReset, freshness) {
-        const projectionBasis = raw?.projectionBasis || null;
-        let signal = _paceSignal(raw?.outcomeKind, raw?.headroomPct, raw?.headroomDirection, {
-            basis, nextReset, projectionBasis, requireKnownBasis: true, requireMeasured: true,
+    function _guidanceSignal(raw, basis, intervalKnown) {
+        const neutral = (valueText, summary = valueText) => ({
+            ..._neutralSignal(summary), valueText,
         });
+        if (!intervalKnown)
+            return neutral('Unknown', 'Forecast interval unavailable');
+        if (raw?.guidanceState === undefined)
+            return neutral('Unknown', 'Server does not provide guidance states');
+        switch (raw.guidanceState) {
+        case 'learning': return neutral('Learning', 'All eligible accounts are learning their burn');
+        case 'uncertain': return neutral('Limited evidence', 'Weak evidence or incomplete account coverage');
+        case 'no_accounts': return neutral('No accounts', 'No active accounts for this workload');
+        case 'exhausted':
+            return { ...neutral('Out', 'Modelled quota exhausted with complete coverage'), severity: 'critical' };
+        case 'unquantified':
+            if (raw.outcomeKind === 'beyond_horizon')
+                return neutral('Reaches deadline', 'Projected to reach the deadline; numeric adjustment unavailable');
+            if (raw.outcomeKind === 'runway')
+                return { ...neutral('May run out', 'May exhaust before the deadline; required cut unavailable'), severity: 'warning' };
+            return neutral('Unknown', 'Forecast outcome unavailable');
+        case 'increase':
+        case 'reduce': {
+            const increase = raw.guidanceState === 'increase';
+            const percent = raw.headroomPct;
+            if (raw.projectionBasis !== 'measured' || !['exact', 'bound'].includes(basis) ||
+                typeof percent !== 'number' || !Number.isFinite(percent) || percent <= 0 ||
+                raw.headroomDirection !== (increase ? 'margin' : 'deficit') ||
+                raw.outcomeKind !== (increase ? 'beyond_horizon' : 'runway'))
+                return neutral('Unknown', 'Guidance fields are inconsistent or unavailable');
+            const rounded = Number(percent.toPrecision(3));
+            const valueText = `${increase ? '↑' : '↓'} ~${rounded}% ${increase ? 'room' : 'pace'}${basis === 'bound' ? '*' : ''}`;
+            return {
+                ...neutral(valueText, `${increase ? 'Room to increase work rate by' : 'Reduce work rate by'} roughly ${rounded}%` +
+                    (basis === 'bound' ? ' (conservative bound)' : ' (approximate model threshold)')),
+                action: increase ? 'ROOM' : 'CUT', percent, direction: raw.headroomDirection,
+                severity: increase ? 'normal' : 'warning',
+            };
+        }
+        default: return neutral('Unknown', 'Forecast unavailable');
+        }
+    }
+
+    function _headroomAbsenceText(reason) {
+        const reasons = {
+            learning_accounts: 'Some accounts are still learning their burn',
+            structural_evidence: 'Observation evidence is insufficient',
+            bound_broken_by_credits: 'Modelled reset credits prevent a reliable family bound',
+            beyond_probe_range: 'Numeric adjustment is outside the model probe range',
+            not_projected: 'No numeric adjustment was projected',
+            other: 'Numeric adjustment is unavailable',
+        };
+        return Object.prototype.hasOwnProperty.call(reasons, reason)
+            ? reasons[reason] : reason ? 'Numeric adjustment is unavailable' : '';
+    }
+
+    function _workloadForecast(raw, basis, nextReset, freshness, intervalKnown) {
+        let signal = _guidanceSignal(raw, basis, intervalKnown);
+        if (nextReset && signal.valueText === 'Reaches deadline')
+            signal.valueText = 'Reaches reset';
         const exhaustsAt = raw?.outcomeKind === 'runway' && timestampMs(raw?.exhaustsAt) !== null
             ? raw.exhaustsAt : null;
-        if (exhaustsAt && projectionBasis === 'measured')
-            signal.summary += `\nProjected exhaustion: ${formatTimestamp(exhaustsAt)}`;
+        const absenceText = _headroomAbsenceText(raw?.headroomAbsence);
+        if (absenceText && signal.percent === null)
+            signal.summary += `\n${absenceText}`;
+        if (exhaustsAt) {
+            const qualified = signal.percent !== null ||
+                (signal.valueText === 'May run out' && raw.projectionBasis === 'measured');
+            signal.summary += `\n${qualified ? 'Projected exhaustion' : 'Unverified exhaustion estimate'}: ${formatTimestamp(exhaustsAt)}`;
+        }
+        if (raw?.guidanceState === undefined) {
+            const outcome = { beyond_horizon: 'projected to reach deadline', runway: 'may exhaust before deadline',
+                out_now: 'modelled quota exhausted', no_accounts: 'no active accounts' }[raw?.outcomeKind];
+            if (outcome)
+                signal.summary += `\nRaw forecast (legacy server): ${outcome}; evidence: ${raw?.projectionBasis || 'unknown'}`;
+        }
         if (freshness.stale)
             signal = _staleSignal(signal);
         return {
-            ...signal,
-            ...freshness,
-            outcomeKind: String(raw?.outcomeKind || 'unknown'),
-            exhaustsAt,
-            projectionBasis,
-            projectionLabel: projectionBasis === 'measured' ? 'Measured projection' :
-                projectionBasis === 'structural' ? 'Early / structural estimate' : 'Evidence unavailable',
+            ...signal, ...freshness,
+            guidanceState: raw?.guidanceState || null,
+            headroomAbsence: raw?.headroomAbsence || null,
+            outcomeKind: String(raw?.outcomeKind || 'unknown'), exhaustsAt,
+            projectionBasis: raw?.projectionBasis || null,
         };
     }
 
@@ -517,40 +516,39 @@ var UsageModel = (() => {
             const unopenedAccounts = raw.dimensionKind === 'family'
                 ? Math.min(unreadableAccounts, nonNegativeCount(raw?.unopenedAccounts)) : 0;
             const otherExcludedAccounts = unreadableAccounts - unopenedAccounts;
-            const label = String(raw.label || humanizeStatus(raw.dimensionId));
+            const target = WORKLOAD_TARGETS.find(item => item.key === `${raw.dimensionKind}:${raw.dimensionId}`);
+            const label = target?.label || String(raw.label || humanizeStatus(raw.dimensionId));
             const unopenedText = unopenedAccounts
                 ? `${unopenedAccounts} ${unopenedAccounts === 1 ? 'account has' : 'accounts have'} not used ${label} this week` : '';
             const spentAccounts = nonNegativeCount(raw?.spentAccounts);
+            const learningAccounts = nonNegativeCount(raw?.learningAccounts);
             const depth = [`${eligibleAccounts} eligible`];
             if (otherExcludedAccounts)
                 depth.push(`${otherExcludedAccounts} unreadable`);
             if (unopenedAccounts)
                 depth.push(`${unopenedAccounts} unopened`);
+            if (learningAccounts)
+                depth.push(`${learningAccounts} learning`);
             if (spentAccounts)
                 depth.push(`${spentAccounts} spent`);
             const longTerm = {
-                ..._workloadForecast(raw, basis, false, freshness),
+                ..._workloadForecast(raw, basis, false, freshness, horizonMs > 0 &&
+                    (payload.intervalKind === undefined || payload.intervalKind === 'fixed_horizon')),
                 intervalLabel: `Long-term pace · ${horizonText}`,
                 headroomAbsence: raw?.headroomAbsence || null,
             };
-            if (!horizonMs) {
-                Object.assign(longTerm, _neutralSignal('Long-term forecast interval unavailable'));
-                if (freshness.stale)
-                    Object.assign(longTerm, _staleSignal(longTerm));
-            }
             const resetsMs = timestampMs(raw?.nextReset?.resetsAt);
             const expired = resetsMs !== null && resetsMs <= localNowMs;
             const validReset = resetsMs !== null && !expired;
             let primary = validReset
-                ? _workloadForecast(raw.nextReset, basis, true, freshness)
+                ? _workloadForecast(raw.nextReset, basis, true, freshness,
+                    raw.nextReset.intervalKind === undefined || raw.nextReset.intervalKind === 'until_next_weekly_reset')
                 : {
                     ..._neutralSignal(expired ? 'Next-reset forecast expired' : 'Next-reset forecast unavailable',
                         expired ? 'EXPIRED' : 'NO READING'),
+                    valueText: expired ? 'Expired' : 'Unavailable',
                     ...freshness,
-                    projectionLabel: '',
                 };
-            if (!validReset && raw.outcomeKind === 'no_accounts')
-                Object.assign(primary, _neutralSignal('No active accounts for this workload', 'NO ACCOUNTS'));
             if (!validReset && freshness.stale)
                 Object.assign(primary, _staleSignal(primary));
             rows.push({
@@ -562,7 +560,7 @@ var UsageModel = (() => {
                 basis,
                 basisLabel: basis === 'exact' ? 'Exact threshold' :
                     basis === 'bound' ? 'Conservative bound' : 'Unknown basis',
-                eligibleAccounts, unreadableAccounts, unopenedAccounts, otherExcludedAccounts, spentAccounts,
+                eligibleAccounts, unreadableAccounts, unopenedAccounts, otherExcludedAccounts, spentAccounts, learningAccounts,
                 unopenedText,
                 incomplete: unreadableAccounts > 0,
                 depthText: depth.join(' · '),
@@ -581,14 +579,8 @@ var UsageModel = (() => {
         };
     }
 
-    function panelWorkloadLabel(signal, showPercentage = false) {
-        if (signal?.stale)
-            return 'Stale';
-        if (signal?.expired)
-            return 'Expired';
-        const numericDirection = signal?.percent !== null && signal?.percent !== undefined &&
-            (signal.direction === 'margin' || signal.direction === 'deficit');
-        return showPercentage && numericDirection ? String(signal.valueText || '') : '';
+    function panelWorkloadLabel(signal) {
+        return signal?.stale ? 'Stale' : signal?.expired ? 'Expired' : signal?.valueText || 'Unknown';
     }
 
     function _accountName(accountId, accounts) {
@@ -602,7 +594,7 @@ var UsageModel = (() => {
         if (ratio === null)
             return 'Pace not stated';
         const formatted = ratio.toFixed(2).replace(/0$/, '');
-        return `${formatted}× sustainable pace`;
+        return `${formatted}× even weekly spending (least-used account)`;
     }
 
     function pacingView(payload, accounts = [], localNowMs = Date.now(), receivedAt = null, fetchFailed = false) {
@@ -630,27 +622,19 @@ var UsageModel = (() => {
                 if (unknown)
                     fiveHourParts.push(`${unknown} unknown`);
             }
-            const burnRatio = finiteNumber(raw?.burnRatio);
             const resetsMs = timestampMs(raw?.resetsAt);
             const expired = resetsMs !== null && resetsMs <= localNowMs;
-            let pace = classPaceSignal({ burnRatio: raw?.burnRatio, burnTone: raw?.burnTone });
-            if (expired)
-                pace = _neutralSignal('Next-reset forecast expired', 'EXPIRED');
-            if (freshness.stale)
-                pace = _staleSignal(pace);
             classes.push({
                 key: classId,
                 classId,
-                pace,
                 stale: freshness.stale,
                 expired,
-                usable: !freshness.stale && !expired && burnRatio !== null && burnRatio >= 0,
                 label: String(raw?.label || humanizeStatus(classId)),
                 binding: classId === bindingClassId,
                 utilizationPct: clampPercent(raw?.utilizationPct),
                 leastUsedAccountId: raw?.leastUsedAccountId || null,
                 leastUsedAccountName: _accountName(raw?.leastUsedAccountId, accounts),
-                burnRatio,
+                burnRatio: finiteNumber(raw?.burnRatio),
                 burnText: _burnRatioText(raw?.burnRatio),
                 burnSeverity: freshness.stale || raw?.burnTone == null ? 'unknown' : toneSeverity(raw.burnTone),
                 outlookTone: String(raw?.outlookTone || 'other'),
@@ -683,80 +667,24 @@ var UsageModel = (() => {
         };
     }
 
-    function _paceRowSignal(signal) {
-        return {
-            action: signal.action,
-            valueText: signal.valueText,
-            side: signal.side,
-            fillPercent: signal.fillPercent,
-            severity: signal.severity,
-            percent: signal.percent,
-            direction: signal.direction,
-            summary: signal.summary,
-        };
-    }
-
-    function _pacingDetail(item, localNowMs) {
-        return [
-            item.burnText,
-            item.utilizationPct === null ? 'weekly usage unknown' : `${item.utilizationPct}% used (least-used)`,
-            item.willRunOut ? `${item.willRunOut} of ${item.eligibleTotal} hit 100% by reset` : '',
-            item.singlePointOfFailure ? 'no failover' : '',
-            item.resetsAt ? `resets ${formatReset(item.resetsAt, localNowMs)}` : '',
-        ].filter(Boolean).join(' · ');
-    }
-
-    function _headroomDetail(row, localNowMs) {
-        return [
-            String(row.summary || '').split('\n')[0],
-            row.basis === 'bound' ? 'conservative bound' : '',
-            row.resetsAt ? `resets ${formatReset(row.resetsAt, localNowMs)}` : '',
-            row.otherExcludedAccounts ? `${row.otherExcludedAccounts} unreadable` : '',
-        ].filter(Boolean).join(' · ') + (row.unopenedText ? `\n${row.unopenedText}` : '');
-    }
-
-    function _paceRows(pacingNow, workloadNow, localNowMs) {
-        const rows = [];
-        const pacedClassIds = new Set();
-        for (const item of pacingNow.classes) {
-            pacedClassIds.add(item.classId);
-            const headroomRow = workloadNow.rows.find(
-                row => row.dimensionKind === 'class' && row.dimensionId === item.classId
-            );
-            const useHeadroom = !item.usable && Boolean(headroomRow) &&
-                !headroomRow.stale && !headroomRow.expired;
-            rows.push({
-                key: `class:${item.classId}`,
-                kind: 'class',
-                label: item.label,
-                binding: item.binding,
-                source: useHeadroom ? 'headroom' : 'pacing',
-                ..._paceRowSignal(useHeadroom ? headroomRow : item.pace),
-                stale: useHeadroom ? headroomRow.stale : item.stale,
-                expired: useHeadroom ? headroomRow.expired : item.expired,
-                resetsAt: useHeadroom ? headroomRow.resetsAt : item.resetsAt,
-                detail: useHeadroom
-                    ? _headroomDetail(headroomRow, localNowMs)
-                    : _pacingDetail(item, localNowMs),
-            });
-        }
-        for (const row of workloadNow.rows) {
-            if (row.dimensionKind === 'class' && pacedClassIds.has(row.dimensionId))
-                continue;
-            rows.push({
-                key: row.key,
-                kind: row.dimensionKind,
-                label: row.label,
-                binding: false,
-                source: 'headroom',
-                ..._paceRowSignal(row),
-                stale: row.stale,
-                expired: row.expired,
-                resetsAt: row.resetsAt,
-                detail: _headroomDetail(row, localNowMs),
-            });
-        }
-        return rows;
+    function _paceRows(workloadNow, showScoped) {
+        const targets = WORKLOAD_TARGETS.filter(target => showScoped || !target.key.startsWith('family:'));
+        return targets.map(({ key, label, icon }) => {
+            const forecast = workloadNow.rows.find(row => row.key === key);
+            const row = forecast || {
+                ..._neutralSignal('Forecast unavailable'), valueText: 'Unknown',
+                stale: workloadNow.stale, expired: false,
+            };
+            if (!forecast && workloadNow.stale)
+                Object.assign(row, _staleSignal(row));
+            const detail = [
+                'Until next weekly reset' + (row.resetsAt ? ` · ${row.resetText}` : ''),
+                row.summary, row.depthText, row.coverageCaveat, row.unopenedText,
+                key === 'family:fable' ? 'Fable overlaps Claude capacity; * conservative bound' : '',
+                workloadNow.freshnessText,
+            ].filter(Boolean).join('\n');
+            return { ...row, key, label, icon, kind: key.split(':')[0], source: 'headroom', detail };
+        });
     }
 
     function _runwayCauseLabel(cause, accounts) {
@@ -920,7 +848,7 @@ var UsageModel = (() => {
         );
         if (options.showScoped === false)
             workloadNow.rows = workloadNow.rows.filter(row => row.dimensionKind !== 'family');
-        const paceRows = _paceRows(pacingNow, workloadNow, localNowMs);
+        const paceRows = _paceRows(workloadNow, options.showScoped !== false);
 
         return {
             nowMs,
@@ -987,7 +915,6 @@ var UsageModel = (() => {
         anchoredNow,
         buildView,
         clampPercent,
-        classPaceSignal,
         createRefreshCycle,
         credentialNotice,
         forecastFreshness,

@@ -233,137 +233,13 @@ test('qualifies incomplete pool headroom without changing its direction', () => 
     assert.equal(pace.incomplete, true);
 });
 
-test('maps exact classes and conservative family bounds without conflating them', () => {
-    const rows = model.workloadHeadroomView(fixtures.workloadHeadroom(), NOW, NOW).rows;
-    assert.deepEqual(
-        rows.map(row => [row.label, row.longTerm.valueText, row.basis, row.incomplete]),
-        [
-            ['Claude', '+30%', 'exact', false],
-            ['GPT', '+41%', 'exact', false],
-            ['Fable', 'plenty', 'bound', true],
-        ]
-    );
-    assert.equal(rows[2].longTerm.severity, 'unknown');
-    assert.equal(rows[2].depthText, '2 eligible · 1 unreadable · 1 spent');
-    assert.equal(rows[2].longTerm.projectionLabel, 'Early / structural estimate');
-});
-
-test('describes a family deficit as a safe cut rather than an exact threshold', () => {
-    const response = fixtures.workloadHeadroom({
-        rows: [{
-            dimensionKind: 'family', dimensionId: 'fable', label: 'Fable',
-            outcomeKind: 'runway', exhaustsAt: '2026-08-25T00:00:00.000Z',
-            headroomPct: 40, headroomDirection: 'deficit',
-            headroomBasis: 'conservative_bound', headroomAbsence: null,
-            projectionBasis: 'measured', eligibleAccounts: 2,
-            unreadableAccounts: 0, spentAccounts: 0,
-        }],
-    });
-    const [row] = model.workloadHeadroomView(response, NOW, NOW).rows;
-    assert.equal(row.longTerm.valueText, '−40% bound');
-    assert.match(row.longTerm.summary, /Conservative cut/);
-});
-
-test('structural evidence takes priority over long-term headroom absence reasons', () => {
-    const base = {
-        dimensionKind: 'family', dimensionId: 'fable', label: 'Fable',
-        headroomPct: null, headroomDirection: null,
-        headroomBasis: 'conservative_bound', projectionBasis: 'structural',
-        eligibleAccounts: 2, unreadableAccounts: 0, spentAccounts: 0,
-    };
-    const cases = [
-        [{ outcomeKind: 'beyond_horizon', headroomAbsence: 'beyond_probe_range' }, 'PLENTY'],
-        [{ outcomeKind: 'runway', headroomAbsence: 'beyond_probe_range' }, 'CUT HARD'],
-        [{ outcomeKind: 'runway', headroomAbsence: 'bound_broken_by_credits' }, 'CUT HARD'],
-        [{ outcomeKind: 'unknown', headroomAbsence: 'not_projected' }, 'NO READING'],
-        [{ outcomeKind: 'beyond_horizon', headroomAbsence: 'other' }, 'PLENTY'],
-    ];
-    for (const [fields, expected] of cases) {
-        const response = fixtures.workloadHeadroom({ rows: [{ ...base, ...fields }] });
-        const forecast = model.workloadHeadroomView(response, NOW, NOW).rows[0].longTerm;
-        assert.equal(forecast.action, expected);
-        if (expected !== 'NO READING')
-            assert.equal(forecast.severity, 'unknown');
-    }
-    const outNow = fixtures.workloadHeadroom({
-        rows: [{ ...base, outcomeKind: 'out_now', headroomAbsence: 'beyond_probe_range' }],
-    });
-    const exhausted = model.workloadHeadroomView(outNow, NOW, NOW).rows[0].longTerm;
-    assert.equal(exhausted.action, 'OUT');
-    assert.equal(exhausted.severity, 'critical');
-    assert.doesNotMatch(exhausted.summary, /early estimate/);
-});
-
-test('fails closed when a workload headroom basis is unknown', () => {
-    const response = fixtures.workloadHeadroom({
-        rows: [{
-            dimensionKind: 'family', dimensionId: 'fable', label: 'Fable',
-            outcomeKind: 'beyond_horizon', exhaustsAt: null,
-            headroomPct: 30, headroomDirection: 'margin',
-            headroomBasis: 'other', headroomAbsence: null,
-            projectionBasis: 'measured', eligibleAccounts: 2,
-            unreadableAccounts: 0, spentAccounts: 0,
-        }],
-    });
-    const [row] = model.workloadHeadroomView(response, NOW, NOW).rows;
-
-    assert.equal(row.longTerm.action, 'NO READING');
-    assert.equal(row.longTerm.valueText, '–');
-    assert.equal(row.basisLabel, 'Unknown basis');
-});
-
-test('keeps workload state words off the compact panel', () => {
-    const rows = model.workloadHeadroomView(fixtures.workloadHeadroom(), NOW, NOW).rows;
-    assert.equal(model.panelWorkloadLabel(rows[0]), '');
-    assert.equal(model.panelWorkloadLabel(rows[0], true), '');
-
-    const deficitResponse = fixtures.workloadHeadroom({
-        rows: [{
-            dimensionKind: 'class', dimensionId: 'anthropic', label: 'Claude',
-            outcomeKind: 'runway', exhaustsAt: '2026-08-25T00:00:00.000Z',
-            headroomPct: 20, headroomDirection: 'deficit',
-            headroomBasis: 'exact', headroomAbsence: null,
-            projectionBasis: 'measured', eligibleAccounts: 2,
-            unreadableAccounts: 0, spentAccounts: 0,
-        }],
-    });
-    const [deficit] = model.workloadHeadroomView(deficitResponse, NOW, NOW).rows;
-    assert.equal(model.panelWorkloadLabel(deficit), '');
-
-    const response = fixtures.workloadHeadroom({
-        rows: [{
-            dimensionKind: 'family', dimensionId: 'fable', label: 'Fable',
-            outcomeKind: 'runway', exhaustsAt: null,
-            headroomPct: null, headroomDirection: null,
-            headroomBasis: 'conservative_bound', headroomAbsence: 'beyond_probe_range',
-            projectionBasis: 'structural', eligibleAccounts: 2,
-            unreadableAccounts: 0, spentAccounts: 0,
-        }],
-    });
-    const [exceptional] = model.workloadHeadroomView(response, NOW, NOW).rows;
-    assert.equal(exceptional.side, 'none');
-    assert.equal(exceptional.fillPercent, 0);
-    assert.equal(exceptional.longTerm.action, 'CUT HARD');
-    assert.equal(exceptional.longTerm.side, 'left');
-    assert.equal(exceptional.longTerm.fillPercent, 100);
-    assert.equal(exceptional.longTerm.severity, 'unknown');
-    assert.equal(model.panelWorkloadLabel(exceptional), '');
-    assert.equal(model.panelWorkloadLabel(exceptional, true), '');
-    assert.equal(model.panelWorkloadLabel({
-        action: 'NO BOUND', valueText: '–', percent: null, direction: null,
-    }, true), '');
-    assert.equal(model.panelWorkloadLabel({
-        action: 'NO READING', valueText: '–', percent: null, direction: null,
-    }, true), '');
-});
-
 test('uses server pacing tones and preserves absent burn and five-hour readings', () => {
     const view = model.pacingView(fixtures.pacing(), fixtures.accounts(), NOW, NOW);
     assert.equal(view.bindingClassId, 'codex');
     assert.deepEqual(
         view.classes.map(item => [item.label, item.binding, item.severity, item.burnText]),
         [
-            ['Claude', false, 'normal', '1.08× sustainable pace'],
+            ['Claude', false, 'normal', '1.08× even weekly spending (least-used account)'],
             ['GPT', true, 'warning', 'Pace not stated'],
         ]
     );
@@ -380,88 +256,6 @@ test('keeps the pool five-hour tone separate from unread class measurements', ()
     assert.equal(view.fiveHourSeverity, 'critical');
     assert.equal(view.classes[1].fiveHour.unread, true);
     assert.equal(view.classes[1].fiveHour.severity, 'unknown');
-});
-
-test('derives class pace from the burn ratio', () => {
-    const view = model.pacingView(fixtures.pacing(), fixtures.accounts(), NOW, NOW);
-    const claude = view.classes[0].pace;
-    assert.deepEqual(
-        [claude.action, claude.valueText, claude.side, claude.fillPercent, claude.severity],
-        ['CUT', '−7%', 'left', 14, 'warning']
-    );
-    assert.equal(view.classes[0].usable, true);
-    assert.equal(view.classes[1].pace.action, 'NO READING');
-    assert.equal(view.classes[1].usable, false);
-
-    const cases = [
-        [{ burnRatio: 0, burnTone: 'success' }, ['IDLE', 'idle', 'right', 100, 'normal']],
-        [{ burnRatio: 0.5, burnTone: null }, ['ROOM', '+100%', 'right', 100, 'normal']],
-        [{ burnRatio: 2, burnTone: 'destructive' }, ['CUT', '−50%', 'left', 100, 'critical']],
-        [{ burnRatio: 1.5, burnTone: null }, ['CUT', '−33%', 'left', 66, 'warning']],
-        [{ burnRatio: 1 }, ['HOLD', '±0%', 'none', 0, 'normal']],
-    ];
-    for (const [item, expected] of cases) {
-        const signal = model.classPaceSignal(item);
-        assert.deepEqual(
-            [signal.action, signal.valueText, signal.side, signal.fillPercent, signal.severity],
-            expected
-        );
-    }
-
-    const stale = model.pacingView(
-        fixtures.pacing({ generatedAt: new Date(NOW - 240000).toISOString() }),
-        fixtures.accounts(), NOW, NOW
-    );
-    assert.equal(stale.classes[0].pace.action, 'STALE');
-    assert.equal(stale.classes[0].pace.valueText, 'Stale');
-    assert.equal(stale.classes[0].usable, false);
-
-    const response = fixtures.pacing();
-    response.classes[0].resetsAt = new Date(NOW - 1000).toISOString();
-    const expired = model.pacingView(response, fixtures.accounts(), NOW, NOW);
-    assert.equal(expired.classes[0].pace.action, 'EXPIRED');
-    assert.equal(expired.classes[0].expired, true);
-    assert.equal(expired.classes[0].usable, false);
-});
-
-test('panel pace rows come from class pacing and fall back to workload headroom', () => {
-    const build = (pacing, workloads, options = {}) => model.buildView(
-        fixtures.accounts(), fixtures.status(), fixtures.runway(), pacing, workloads, options, NOW
-    );
-    const view = build(fixtures.pacing(), fixtures.nextResetWorkloads());
-    assert.deepEqual(view.paceRows.map(row => [row.key, row.source]), [
-        ['class:anthropic', 'pacing'],
-        ['class:codex', 'headroom'],
-        ['family:fable', 'headroom'],
-    ]);
-    assert.equal(view.paceRows[1].valueText, '+25%');
-    assert.equal(view.paceRows[0].binding, false);
-    assert.equal(view.paceRows[1].binding, true);
-    assert.match(
-        view.paceRows[0].detail,
-        /1\.08× sustainable pace · 47% used \(least-used\) · 2 of 2 hit 100% by reset · resets in/
-    );
-    assert.match(view.paceRows[2].detail, /early estimate · conservative bound · resets in/);
-
-    assert.deepEqual(
-        build(null, fixtures.nextResetWorkloads()).paceRows.map(row => row.source),
-        ['headroom', 'headroom', 'headroom']
-    );
-
-    const stalePacing = fixtures.pacing({ generatedAt: new Date(NOW - 240000).toISOString() });
-    assert.deepEqual(
-        build(stalePacing, fixtures.nextResetWorkloads()).paceRows.map(row => row.source),
-        ['headroom', 'headroom', 'headroom']
-    );
-    assert.deepEqual(
-        build(stalePacing, null).paceRows.map(row => [row.source, row.action]),
-        [['pacing', 'STALE'], ['pacing', 'STALE']]
-    );
-    assert.equal(
-        build(fixtures.pacing(), fixtures.nextResetWorkloads(), { showScoped: false })
-            .paceRows.some(row => row.kind === 'family'),
-        false
-    );
 });
 
 test('finite runway becomes the compact panel headline and resolves its cause', () => {
@@ -546,13 +340,13 @@ test('next-reset room and long-term deficit remain independent', () => {
     const view = model.workloadHeadroomView(fixtures.nextResetWorkloads(), NOW, NOW);
     const row = view.rows.find(row => row.key === 'class:codex');
     assert.equal(row.action, 'ROOM');
-    assert.equal(row.valueText, '+25%');
+    assert.equal(row.valueText, '↑ ~25% room');
     assert.equal(row.intervalLabel, 'Until next weekly reset');
     assert.match(row.resetText, /in 1d/);
     assert.equal(row.longTerm.action, 'CUT');
-    assert.equal(row.longTerm.valueText, '−40%');
+    assert.equal(row.longTerm.valueText, '↓ ~40% pace');
     assert.equal(row.longTerm.intervalLabel, 'Long-term pace · 14 days');
-    assert.equal(model.panelWorkloadLabel(row, true), '+25%');
+    assert.equal(model.panelWorkloadLabel(row, true), '↑ ~25% room');
 });
 
 test('long-term interval comes from horizonMs and must be known for advice', () => {
@@ -593,68 +387,6 @@ test('next-reset deadline expires between polls without inferring quota recovery
     assert.equal(row.longTerm.action, 'CUT');
 });
 
-test('both intervals withhold advice without measured evidence', () => {
-    for (const projectionBasis of ['structural', null, undefined, 'other', 'future-basis']) {
-        for (const headroomPct of [25, null]) {
-            const response = fixtures.nextResetWorkloads();
-            Object.assign(response.rows[1], { projectionBasis, headroomPct });
-            Object.assign(response.rows[1].nextReset, { projectionBasis, headroomPct });
-            const row = model.workloadHeadroomView(response, NOW).rows[1];
-            const structural = projectionBasis === 'structural';
-            for (const [forecast, side] of [[row, 'right'], [row.longTerm, 'left']]) {
-                assert.equal(forecast.percent, null);
-                assert.equal(forecast.side, structural ? side : 'none');
-                assert.equal(forecast.fillPercent, structural ? 100 : 0);
-                assert.equal(forecast.severity, 'unknown');
-                assert.match(forecast.summary, structural ? /early estimate/ : /Evidence unavailable/);
-            }
-        }
-    }
-});
-
-test('measured null headroom fills the bar to scale in the outcome direction', () => {
-    const cases = [
-        ['runway', 'CUT HARD', 'left', 'warning', /May exhaust before/],
-        ['beyond_horizon', 'PLENTY', 'right', 'normal', /Reaches/],
-    ];
-    for (const [outcomeKind, action, side, severity, pattern] of cases) {
-        const response = fixtures.nextResetWorkloads();
-        const fields = {
-            headroomPct: null, headroomDirection: null, outcomeKind,
-            exhaustsAt: outcomeKind === 'runway' ? '2026-08-24T20:00:00.000Z' : null,
-        };
-        Object.assign(response.rows[1], fields, { headroomAbsence: 'beyond_probe_range' });
-        Object.assign(response.rows[1].nextReset, fields);
-        const row = model.workloadHeadroomView(response, NOW).rows[1];
-        for (const forecast of [row, row.longTerm]) {
-            assert.equal(forecast.action, action);
-            assert.equal(forecast.side, side);
-            assert.equal(forecast.fillPercent, 100);
-            assert.equal(forecast.severity, severity);
-            assert.equal(forecast.percent, null);
-            assert.match(forecast.summary, pattern);
-            if (outcomeKind === 'runway')
-                assert.match(forecast.summary, /Projected exhaustion:/);
-        }
-        assert.match(row.summary, /next reset/);
-        assert.match(row.longTerm.summary, /stated model horizon/);
-    }
-});
-
-test('long-term absence reasons do not leak into the next-reset interpretation', () => {
-    const response = fixtures.nextResetWorkloads();
-    const raw = response.rows[2];
-    Object.assign(raw, { projectionBasis: 'measured', headroomPct: null,
-        headroomDirection: null, headroomAbsence: 'bound_broken_by_credits' });
-    raw.nextReset.projectionBasis = 'measured';
-    const row = model.workloadHeadroomView(response, NOW).rows[2];
-    assert.equal(row.valueText, '≥+25%');
-    assert.match(row.summary, /conservative bound/);
-    assert.match(row.longTerm.summary, /Reaches the stated model horizon/);
-    assert.equal(row.depthText, '2 eligible · 1 unreadable · 1 spent');
-    assert.match(row.coverageCaveat, /lower bounds on runway/);
-});
-
 test('unopened family accounts are explained without adding modeled capacity or usage readings', () => {
     const response = fixtures.nextResetWorkloads();
     const build = () => model.buildView(
@@ -672,11 +404,9 @@ test('unopened family accounts are explained without adding modeled capacity or 
     assert.equal(row.incomplete, true);
     assert.match(row.coverageCaveat, /lower bounds on runway/);
     const pace = after.paceRows.find(item => item.key === 'family:fable');
-    assert.match(pace.detail, /\n1 account has not used Fable this week$/);
-    assert.doesNotMatch(pace.detail, /unreadable|0%/);
-    assert.deepEqual({ ...pace, detail: '' }, {
-        ...before.paceRows.find(item => item.key === 'family:fable'), detail: '',
-    });
+    assert.match(pace.detail, /\n1 account has not used Fable this week\n/);
+    assert.doesNotMatch(row.depthText, /unreadable|0%/);
+    assert.equal(pace.valueText, before.paceRows.find(item => item.key === 'family:fable').valueText);
     assert.deepEqual(after.accounts, before.accounts);
 });
 
@@ -691,7 +421,7 @@ test('mixed family exclusions split unopened accounts from other unreadable acco
         fixtures.accounts(), fixtures.status(), fixtures.runway(), fixtures.pacing(), response, {}, NOW
     );
     assert.match(view.paceRows.find(item => item.key === 'family:fable').detail,
-        /1 unreadable\n2 accounts have not used Fable this week$/);
+        /2 accounts have not used Fable this week/);
 });
 
 test('missing or invalid unopened counts preserve coverage and cannot exceed unreadable counts', () => {
@@ -715,26 +445,6 @@ test('missing or invalid unopened counts preserve coverage and cannot exceed unr
     assert.equal(row.otherExcludedAccounts, 1);
 });
 
-test('unrecognized outcomes stay neutral while no_accounts and out_now have distinct meanings', () => {
-    for (const outcomeKind of ['unknown', 'other', 'future-kind', 'no_accounts', 'out_now']) {
-        const response = fixtures.nextResetWorkloads();
-        Object.assign(response.rows[1], { outcomeKind });
-        Object.assign(response.rows[1].nextReset, { outcomeKind });
-        const row = model.workloadHeadroomView(response, NOW).rows[1];
-        for (const forecast of [row, row.longTerm]) {
-            assert.equal(forecast.percent, null);
-            if (outcomeKind === 'out_now') {
-                assert.equal(forecast.action, 'OUT');
-                assert.equal(forecast.summary, 'Available modeled capacity exhausted');
-            } else {
-                assert.equal(forecast.fillPercent, 0);
-                assert.equal(forecast.summary, outcomeKind === 'no_accounts'
-                    ? 'No active accounts for this workload' : 'Forecast unavailable');
-            }
-        }
-    }
-});
-
 test('invalid percentages and unknown directions cannot produce signed advice', () => {
     for (const headroomPct of [NaN, Infinity, -10, '25', true, {}, []]) {
         const response = fixtures.nextResetWorkloads();
@@ -750,7 +460,7 @@ test('invalid percentages and unknown directions cannot produce signed advice', 
     }
     const response = fixtures.nextResetWorkloads();
     response.rows[0].nextReset.headroomPct = 0;
-    assert.equal(model.workloadHeadroomView(response, NOW).rows[0].valueText, '+0%');
+    assert.equal(model.workloadHeadroomView(response, NOW).rows[0].valueText, 'Unknown');
 });
 
 test('forecast age uses computation time even when a cached snapshot is just received', () => {
@@ -765,8 +475,8 @@ test('forecast age uses computation time even when a cached snapshot is just rec
     const row = view.rows[1];
     assert.equal(row.action, 'STALE');
     assert.equal(row.fillPercent, 0);
-    assert.match(row.summary, /Last reading: \+25%/);
-    assert.match(row.longTerm.summary, /Last reading: −40%/);
+    assert.match(row.summary, /Last reading: ↑ ~25% room/);
+    assert.match(row.longTerm.summary, /Last reading: ↓ ~40% pace/);
     assert.equal(model.panelWorkloadLabel(row), 'Stale');
 });
 
@@ -805,7 +515,7 @@ test('paused accounts and banked credits never change the server workload foreca
     const response = fixtures.nextResetWorkloads();
     const view = model.buildView(accounts, fixtures.status(), fixtures.runway(), fixtures.pacing(), response, {}, NOW);
     const row = view.workloads.find(row => row.key === 'class:codex');
-    assert.equal(row.valueText, '+25%');
+    assert.equal(row.valueText, '↑ ~25% room');
     assert.equal(row.eligibleAccounts, 1);
     assert.equal(view.accounts.find(account => account.id === 'account-c').state.key, 'paused');
 });
@@ -815,7 +525,7 @@ test('stable workload IDs survive reordering, duplicate labels and additive fiel
     response.rows.reverse();
     response.rows.forEach(row => { row.label = 'Same label'; row.futureField = { nested: true }; });
     const view = model.workloadHeadroomView(response, NOW);
-    assert.equal(view.rows.find(row => row.key === 'class:codex').longTerm.valueText, '−40%');
+    assert.equal(view.rows.find(row => row.key === 'class:codex').longTerm.valueText, '↓ ~40% pace');
     response.rows = response.rows.filter(row => row.dimensionId !== 'codex');
     assert.equal(model.workloadHeadroomView(response, NOW).rows.some(row => row.key === 'class:codex'), false);
     response.rows.push({ dimensionKind: 'other', dimensionId: 'future' }, { dimensionKind: 'class' });

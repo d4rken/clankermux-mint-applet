@@ -1,0 +1,1 @@
+Invented public API examples copied from clankermux/docs/public-api/examples on 2026-09-09. These pin the additive v1 guidance contract independently of the widget implementation. They are not production account snapshots.

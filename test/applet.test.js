@@ -81,8 +81,8 @@ test('forecast-only refresh updates next-reset bars without touching accounts/st
     h.replyOutlook();
     assert.equal(h.applet._accounts, oldAccounts);
     assert.equal(h.applet._lastSuccess, fixtures.NOW - 30000);
-    assert.equal(h.applet._view.workloads[1].valueText, '+25%');
-    assert.equal(h.applet._view.workloads[1].longTerm.valueText, '−40%');
+    assert.equal(h.applet._view.workloads[1].valueText, '↑ ~25% room');
+    assert.equal(h.applet._view.workloads[1].longTerm.valueText, '↓ ~40% pace');
     assert.equal(h.applet._refreshing, false);
     assert.equal(h.timers.size, 0);
     h.applet._refresh(false, true);
@@ -99,7 +99,7 @@ test('failed workload fetch preserves the last snapshot but suppresses its advic
     assert.equal(h.applet._workloadHeadroom, oldWorkload);
     assert.equal(h.applet._view.workloads[1].stale, true);
     assert.equal(h.applet._view.workloads[1].percent, null);
-    assert.match(h.applet._view.workloads[1].summary, /Last reading: \+25%/);
+    assert.match(h.applet._view.workloads[1].summary, /Last reading: ↑ ~25% room/);
     assert.equal(h.applet._view.pacing.stale, false);
     assert.equal(h.applet._lastError, '');
     h.advance(60000);
@@ -175,24 +175,18 @@ test('stale transitions update an open popup even while the pointer is inside', 
     assert.equal(h.applet._view.workloads[1].stale, true);
 });
 
-test('a pacing deadline crossing with fresh headroom updates an open popup while the pointer is inside', () => {
+test('guidance changes update an open popup while the pointer is inside', () => {
     const h = appletHarness();
-    const pacing = fixtures.pacing();
-    pacing.classes[0].resetsAt = new Date(fixtures.NOW + 10000).toISOString();
-    h.applet._refresh(false, true);
-    h.reply('/public/v1/runway', fixtures.runway());
-    h.reply('/public/v1/pacing', pacing);
-    h.reply('/public/v1/workload-headroom', fixtures.nextResetWorkloads());
-    assert.equal(h.applet._view.paceRows[0].source, 'pacing');
     h.applet.menu.isOpen = true;
     h.applet._menuPointerInside = true;
     h.applet._menuSignature = h.applet._menuStateSignature();
     let rebuilt = false;
     h.applet._renderMenu = () => { rebuilt = true; };
-    h.advance(10000);
-    h.applet._render();
-    assert.equal(h.applet._view.paceRows[0].source, 'headroom');
-    assert.equal(h.applet._view.pacing.classes[0].expired, true);
+    const response = fixtures.nextResetWorkloads();
+    response.rows[1].nextReset.guidanceState = 'uncertain';
+    h.applet._refresh(false, true);
+    h.replyOutlook(response);
+    assert.equal(h.applet._view.paceRows[0].valueText, 'Limited evidence');
     assert.equal(rebuilt, true);
 });
 

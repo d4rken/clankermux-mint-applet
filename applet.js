@@ -39,40 +39,6 @@ function updateProgressTrack(track, percent, severity, width) {
     track._clankermuxFill.set_style_class_name(`clankermux-progress-fill ${severity}`);
 }
 
-function createPaceTrack(signal, width, styleClass = 'clankermux-pace-track') {
-    const track = new St.BoxLayout({ style_class: styleClass, width });
-    const halfWidth = Math.max(1, Math.floor(width / 2));
-    track._clankermuxLeft = new St.Bin({ style_class: 'clankermux-pace-half left', width: halfWidth });
-    track._clankermuxLeft.set_fill(false, false);
-    track._clankermuxLeft.set_alignment(St.Align.END, St.Align.MIDDLE);
-    track._clankermuxRight = new St.Bin({ style_class: 'clankermux-pace-half right', width: halfWidth });
-    track._clankermuxRight.set_fill(false, false);
-    track._clankermuxRight.set_alignment(St.Align.START, St.Align.MIDDLE);
-    track._clankermuxLeftFill = new St.Widget({ height: 8 });
-    track._clankermuxRightFill = new St.Widget({ height: 8 });
-    track._clankermuxLeft.set_child(track._clankermuxLeftFill);
-    track._clankermuxRight.set_child(track._clankermuxRightFill);
-    track.add_child(track._clankermuxLeft);
-    track.add_child(track._clankermuxRight);
-    updatePaceTrack(track, signal, width);
-    return track;
-}
-
-function updatePaceTrack(track, signal, width) {
-    const halfWidth = Math.max(1, Math.floor(width / 2));
-    const fillWidth = signal.fillPercent <= 0
-        ? 0
-        : Math.max(2, Math.round(halfWidth * signal.fillPercent / 100));
-    track.set_width(width);
-    track._clankermuxLeft.set_width(halfWidth);
-    track._clankermuxRight.set_width(halfWidth);
-    track._clankermuxLeftFill.set_width(signal.side === 'left' ? fillWidth : 0);
-    track._clankermuxRightFill.set_width(signal.side === 'right' ? fillWidth : 0);
-    const style = `clankermux-pace-fill ${signal.severity}`;
-    track._clankermuxLeftFill.set_style_class_name(style);
-    track._clankermuxRightFill.set_style_class_name(style);
-}
-
 class InfoMenuItem extends PopupMenu.PopupBaseMenuItem {
     constructor(title, subtitle = '', styleClass = '') {
         super({ reactive: false });
@@ -114,59 +80,63 @@ function createUsageBar(window, model, nowMs) {
     return row;
 }
 
-function createPanelWorkload(row, width, displayValue) {
+function createWorkloadIcon(row, iconDirectory) {
+    return new St.Icon({
+        gicon: Gio.icon_new_for_string(`${iconDirectory}/${row.icon}-symbolic.svg`),
+        icon_type: St.IconType.SYMBOLIC,
+        icon_size: 16,
+        y_align: Clutter.ActorAlign.CENTER,
+    });
+}
+
+function createPanelWorkload(row, iconDirectory) {
     const meter = new St.BoxLayout({ style_class: 'clankermux-panel-workload' });
+    meter.add_child(createWorkloadIcon(row, iconDirectory));
     meter._clankermuxLabel = new St.Label({
         style_class: 'clankermux-panel-workload-label',
         y_align: Clutter.ActorAlign.CENTER,
     });
     meter.add_child(meter._clankermuxLabel);
-    meter._clankermuxTrack = createPaceTrack(row, width, 'clankermux-panel-pace-track');
-    meter.add_child(meter._clankermuxTrack);
     meter._clankermuxValue = new St.Label({ y_align: Clutter.ActorAlign.CENTER });
     meter.add_child(meter._clankermuxValue);
-    updatePanelWorkload(meter, row, width, displayValue);
     return meter;
 }
 
-function updatePanelWorkload(meter, row, width, displayValue) {
+function updatePanelWorkload(meter, row, displayValue, showLabels) {
     meter._clankermuxLabel.set_text(row.label);
-    updatePaceTrack(meter._clankermuxTrack, row, width);
+    meter._clankermuxLabel.visible = showLabels;
     meter._clankermuxValue.set_text(displayValue);
     meter._clankermuxValue.set_style_class_name(`clankermux-panel-pace-value ${row.severity}`);
-    meter._clankermuxValue.visible = Boolean(displayValue);
+    meter.set_accessible_name(`${row.label}: ${displayValue}`);
 }
 
 class PaceSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
-    constructor(paceRows) {
+    constructor(paceRows, iconDirectory) {
         super({ reactive: false });
         const outer = new St.BoxLayout({ vertical: true, style_class: 'clankermux-workloads' });
-        outer.add_child(new St.Label({ text: 'Pacing', style_class: 'clankermux-account-name' }));
+        outer.add_child(new St.Label({ text: 'Until next weekly reset', style_class: 'clankermux-account-name' }));
         for (const row of paceRows) {
             const line = new St.BoxLayout({ style_class: 'clankermux-workload-row' });
-            line.add_child(new St.Label({
-                text: row.label,
-                style_class: 'clankermux-workload-label',
-                y_align: Clutter.ActorAlign.CENTER,
-            }));
-            if (row.binding) {
-                line.add_child(new St.Label({
-                    text: 'BINDING',
-                    style_class: 'clankermux-bound-badge',
-                }));
-            }
-            line.add_child(createPaceTrack(row, 150));
+            line.add_child(createWorkloadIcon(row, iconDirectory));
+            line.add_child(new St.Label({ text: row.label, style_class: 'clankermux-workload-label' }));
             line.add_child(new St.Label({
                 text: row.valueText,
                 style_class: `clankermux-workload-value ${row.severity}`,
-                y_align: Clutter.ActorAlign.CENTER,
             }));
             outer.add_child(line);
-            outer.add_child(new St.Label({
-                text: row.detail,
-                style_class: 'clankermux-info-subtitle',
-            }));
+            outer.add_child(new St.Label({ text: row.detail, style_class: 'clankermux-info-subtitle' }));
+            if (row.longTerm) {
+                outer.add_child(new St.Label({
+                    text: `${row.longTerm.intervalLabel}: ${row.longTerm.valueText}`,
+                    style_class: `clankermux-workload-value ${row.longTerm.severity}`,
+                }));
+                outer.add_child(new St.Label({ text: row.longTerm.summary, style_class: 'clankermux-info-subtitle' }));
+            }
         }
+        outer.add_child(new St.Label({
+            text: 'Percentages describe approximate changes in work rate, not quota remaining or agent counts.',
+            style_class: 'clankermux-info-subtitle',
+        }));
         this.addActor(outer, { expand: true });
     }
 }
@@ -231,6 +201,7 @@ class AccountMenuItem extends PopupMenu.PopupBaseMenuItem {
 class ClankermuxUsageApplet extends Applet.Applet {
     constructor(metadata, orientation, panelHeight, instanceId, model, polling) {
         super(orientation, panelHeight, instanceId);
+        this._iconDirectory = `${metadata.path}/icons`;
         this._metadata = metadata;
         this._pollingModule = polling;
         this._model = model;
@@ -322,8 +293,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this.settings.bind('refresh-interval', 'refreshInterval', this._onPollingSettingsChanged.bind(this));
         this.settings.bind('request-timeout', 'requestTimeout', this._onConnectionSettingsChanged.bind(this));
         this.settings.bind('runway-warning-hours', 'runwayWarningHours', this._render.bind(this));
-        this.settings.bind('panel-bar-width', 'panelBarWidth', this._render.bind(this));
-        this.settings.bind('show-panel-percentages', 'showPanelPercentages', this._render.bind(this));
+        this.settings.bind('show-panel-labels', 'showPanelLabels', this._render.bind(this));
         this.settings.bind('show-scoped-limits', 'showScopedLimits', this._render.bind(this));
         this.settings.bind('default-candidate-first', 'defaultCandidateFirst', this._render.bind(this));
 
@@ -690,7 +660,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
     _forecastState() {
         return JSON.stringify([
             this._view?.pace.stale, this._view?.pacing.stale, this._view?.workloadHeadroom.stale,
-            (this._view?.paceRows || []).map(row => [row.key, row.source, row.stale, row.expired]),
+            (this._view?.paceRows || []).map(row => [row.key, row.guidanceState, row.stale, row.expired, row.valueText]),
         ]);
     }
 
@@ -704,33 +674,28 @@ class ClankermuxUsageApplet extends Applet.Applet {
             return;
         }
 
-        const barWidth = Math.max(30, Number(this.panelBarWidth || 52));
         const paceRows = this._view.paceRows;
         const visibleKeys = new Set(paceRows.map(row => row.key));
         for (const [key, meter] of this._panelWorkloads)
             meter.visible = visibleKeys.has(key);
         for (const row of paceRows) {
             const displayValue = this._model.panelWorkloadLabel(
-                row,
-                this.showPanelPercentages === true
+                row
             );
             let meter = this._panelWorkloads.get(row.key);
             if (!meter) {
-                meter = createPanelWorkload(row, barWidth, displayValue);
+                meter = createPanelWorkload(row, this._iconDirectory);
                 this._panelWorkloads.set(row.key, meter);
                 this._panelWorkloadBox.add_child(meter);
-            } else {
-                updatePanelWorkload(meter, row, barWidth, displayValue);
             }
+            updatePanelWorkload(meter, row, displayValue, this.showPanelLabels === true);
             meter.visible = true;
         }
-        const paceUnavailable = this._lastPacingError || this._lastWorkloadHeadroomError;
-        this._panelEmptyLabel.set_text(paceUnavailable ? 'pace !' : 'pace –');
-        this._panelEmptyLabel.visible = !paceRows.length;
+        this._panelEmptyLabel.visible = false;
 
         const lines = [];
         for (const row of paceRows)
-            lines.push(`${row.label}: ${row.valueText}${row.binding ? ' · binding' : ''} · ${row.detail}`);
+            lines.push(`${row.label}: ${this._model.panelWorkloadLabel(row)} · ${row.detail}`);
         const runway = this._view.runway;
         if (runway.available) {
             const causes = runway.causes.length ? ` · ${runway.causes.join(' + ')}` : '';
@@ -797,6 +762,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
             this._model.normalizeBaseUrl(this.apiUrl),
             view?.pool || null,
             view?.paceRows || null,
+            view?.pacing || null,
             view?.runway || null,
             accounts,
             overloads,
@@ -840,12 +806,18 @@ class ClankermuxUsageApplet extends Applet.Applet {
         subtitle += ` · ${this._lastRefreshText()}`;
         this.menu.addMenuItem(new InfoMenuItem('Clankermux usage', subtitle));
 
-        if (this._view.paceRows.length) {
-            this.menu.addMenuItem(new PaceSummaryMenuItem(this._view.paceRows));
-        } else {
+        this.menu.addMenuItem(new PaceSummaryMenuItem(this._view.paceRows, this._iconDirectory));
+
+        for (const item of this._view.pacing.classes) {
+            const lift = item.fiveHour.nextLiftAt
+                ? `Next relief ${this._model.formatReset(item.fiveHour.nextLiftAt, this._view.nowMs)}` : '';
             this.menu.addMenuItem(new InfoMenuItem(
-                'Pacing unavailable',
-                this._lastPacingError || this._lastWorkloadHeadroomError || 'No workloads reported'
+                `${item.label} · Five-hour constraints${item.stale ? ' · Stale' : ''}`,
+                [item.fiveHour.summary, lift, item.burnText,
+                    item.utilizationPct === null ? 'Weekly usage unknown' : `${item.utilizationPct}% weekly usage (least-used account)`,
+                    item.willRunOut ? `${item.willRunOut} of ${item.eligibleTotal} accounts projected to hit 100% by reset` : '',
+                    item.singlePointOfFailure ? 'No failover account' : '',
+                    this._view.pacing.freshnessText].filter(Boolean).join('\n')
             ));
         }
 
@@ -874,6 +846,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
         const runway = this._view.runway;
         const runwayDetails = [
             runway.summary,
+            'Worst observed API-key pool; workload headroom may not apply to restricted keys',
             runway.causes.length ? `Cause: ${runway.causes.join(' + ')}` : '',
             runway.available && !runway.complete ? runway.coverageText : '',
         ].filter(Boolean);

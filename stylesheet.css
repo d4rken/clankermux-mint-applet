@@ -145,72 +145,26 @@
     font-weight: bold;
 }
 
-.clankermux-panel-pace-value,
+.clankermux-panel-pace-value {
+    font-weight: bold;
+}
+
 .clankermux-workload-value {
     color: #8bd49c;
     font-weight: bold;
 }
 
-.clankermux-panel-pace-value.warning,
 .clankermux-workload-value.warning {
     color: #e5b95c;
 }
 
-.clankermux-panel-pace-value.critical,
 .clankermux-workload-value.critical {
     color: #ef7777;
 }
 
-.clankermux-panel-pace-value.unknown,
 .clankermux-workload-value.unknown,
 .clankermux-panel-loading {
     color: #a8a8a8;
-}
-
-.clankermux-pace-track,
-.clankermux-panel-pace-track {
-    height: 8px;
-}
-
-.clankermux-pace-half {
-    height: 8px;
-    background-color: rgba(128, 128, 128, 0.35);
-}
-
-.clankermux-pace-half.left {
-    border-radius: 4px 0 0 4px;
-    border-right: 1px solid rgba(235, 235, 235, 0.75);
-}
-
-.clankermux-pace-half.right {
-    border-radius: 0 4px 4px 0;
-}
-
-.clankermux-pace-fill {
-    height: 8px;
-    background-color: #68b77a;
-    border-radius: 4px;
-}
-
-.clankermux-pace-fill.warning {
-    background-color: #e5b95c;
-}
-
-.clankermux-pace-fill.critical {
-    background-color: #df6868;
-}
-
-.clankermux-pace-fill.unknown {
-    background-color: #888888;
-}
-
-.clankermux-bound-badge {
-    color: #d6b56c;
-    font-size: 0.62em;
-    font-weight: bold;
-    border: 1px solid rgba(214, 181, 108, 0.55);
-    border-radius: 3px;
-    padding: 0 3px;
 }
 
 .clankermux-workloads {
