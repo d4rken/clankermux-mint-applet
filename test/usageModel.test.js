@@ -383,7 +383,7 @@ test('next-reset deadline expires between polls without inferring quota recovery
     assert.equal(row.fillPercent, 0);
     assert.equal(row.resetsAt, new Date(deadline).toISOString());
     assert.match(row.resetText, /expired/);
-    assert.equal(model.panelWorkloadLabel(row), 'Expired');
+    assert.equal(model.panelWorkloadLabel(row), 'Stale');
     assert.equal(row.longTerm.action, 'CUT');
 });
 

@@ -580,7 +580,19 @@ var UsageModel = (() => {
     }
 
     function panelWorkloadLabel(signal) {
-        return signal?.stale ? 'Stale' : signal?.expired ? 'Expired' : signal?.valueText || 'Unknown';
+        if (signal?.stale || signal?.expired)
+            return 'Stale';
+        switch (signal?.valueText) {
+        case 'Learning': return '…';
+        case 'Limited evidence':
+        case 'Unknown':
+        case 'Unavailable': return '?';
+        case 'No accounts': return 'None';
+        case 'May run out': return 'Risk';
+        case 'Reaches reset': return 'Holds';
+        case 'Out': return 'Out';
+        default: return signal?.percent != null ? signal.valueText : '?';
+        }
     }
 
     function _accountName(accountId, accounts) {

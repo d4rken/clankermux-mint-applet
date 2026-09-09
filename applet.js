@@ -92,53 +92,15 @@ function createWorkloadIcon(row, iconDirectory) {
 function createPanelWorkload(row, iconDirectory) {
     const meter = new St.BoxLayout({ style_class: 'clankermux-panel-workload' });
     meter.add_child(createWorkloadIcon(row, iconDirectory));
-    meter._clankermuxLabel = new St.Label({
-        style_class: 'clankermux-panel-workload-label',
-        y_align: Clutter.ActorAlign.CENTER,
-    });
-    meter.add_child(meter._clankermuxLabel);
     meter._clankermuxValue = new St.Label({ y_align: Clutter.ActorAlign.CENTER });
     meter.add_child(meter._clankermuxValue);
     return meter;
 }
 
-function updatePanelWorkload(meter, row, displayValue, showLabels) {
-    meter._clankermuxLabel.set_text(row.label);
-    meter._clankermuxLabel.visible = showLabels;
+function updatePanelWorkload(meter, row, displayValue) {
     meter._clankermuxValue.set_text(displayValue);
     meter._clankermuxValue.set_style_class_name(`clankermux-panel-pace-value ${row.severity}`);
-    meter.set_accessible_name(`${row.label}: ${displayValue}`);
-}
-
-class PaceSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
-    constructor(paceRows, iconDirectory) {
-        super({ reactive: false });
-        const outer = new St.BoxLayout({ vertical: true, style_class: 'clankermux-workloads' });
-        outer.add_child(new St.Label({ text: 'Until next weekly reset', style_class: 'clankermux-account-name' }));
-        for (const row of paceRows) {
-            const line = new St.BoxLayout({ style_class: 'clankermux-workload-row' });
-            line.add_child(createWorkloadIcon(row, iconDirectory));
-            line.add_child(new St.Label({ text: row.label, style_class: 'clankermux-workload-label' }));
-            line.add_child(new St.Label({
-                text: row.valueText,
-                style_class: `clankermux-workload-value ${row.severity}`,
-            }));
-            outer.add_child(line);
-            outer.add_child(new St.Label({ text: row.detail, style_class: 'clankermux-info-subtitle' }));
-            if (row.longTerm) {
-                outer.add_child(new St.Label({
-                    text: `${row.longTerm.intervalLabel}: ${row.longTerm.valueText}`,
-                    style_class: `clankermux-workload-value ${row.longTerm.severity}`,
-                }));
-                outer.add_child(new St.Label({ text: row.longTerm.summary, style_class: 'clankermux-info-subtitle' }));
-            }
-        }
-        outer.add_child(new St.Label({
-            text: 'Percentages describe approximate changes in work rate, not quota remaining or agent counts.',
-            style_class: 'clankermux-info-subtitle',
-        }));
-        this.addActor(outer, { expand: true });
-    }
+    meter.set_accessible_name(`${row.label}: ${row.valueText}`);
 }
 
 class AccountMenuItem extends PopupMenu.PopupBaseMenuItem {
@@ -292,8 +254,6 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this.settings.bind('api-url', 'apiUrl', this._onConnectionSettingsChanged.bind(this));
         this.settings.bind('refresh-interval', 'refreshInterval', this._onPollingSettingsChanged.bind(this));
         this.settings.bind('request-timeout', 'requestTimeout', this._onConnectionSettingsChanged.bind(this));
-        this.settings.bind('runway-warning-hours', 'runwayWarningHours', this._render.bind(this));
-        this.settings.bind('show-panel-labels', 'showPanelLabels', this._render.bind(this));
         this.settings.bind('show-scoped-limits', 'showScopedLimits', this._render.bind(this));
         this.settings.bind('default-candidate-first', 'defaultCandidateFirst', this._render.bind(this));
 
@@ -628,7 +588,6 @@ class ClankermuxUsageApplet extends Applet.Applet {
         if (!this._model || !this.menu)
             return;
         this._polling.ensure();
-        const oldForecastState = this._forecastState();
         this._view = this._model.buildView(
             this._accounts,
             this._status,
@@ -638,7 +597,6 @@ class ClankermuxUsageApplet extends Applet.Applet {
             {
                 showScoped: this.showScopedLimits !== false,
                 defaultCandidateFirst: this.defaultCandidateFirst !== false,
-                runwayWarningHours: Number(this.runwayWarningHours || 72),
                 statusReceivedAt: this._statusReceivedAt,
                 runwayReceivedAt: this._runwayReceivedAt,
                 pacingReceivedAt: this._pacingReceivedAt,
@@ -649,19 +607,8 @@ class ClankermuxUsageApplet extends Applet.Applet {
             }
         );
         this._renderPanel();
-        if (this.menu.isOpen && this._menuStateSignature() !== this._menuSignature) {
-            if (oldForecastState !== this._forecastState())
-                this._renderMenu();
-            else
-                this._requestMenuRebuild();
-        }
-    }
-
-    _forecastState() {
-        return JSON.stringify([
-            this._view?.pace.stale, this._view?.pacing.stale, this._view?.workloadHeadroom.stale,
-            (this._view?.paceRows || []).map(row => [row.key, row.guidanceState, row.stale, row.expired, row.valueText]),
-        ]);
+        if (this.menu.isOpen && this._menuStateSignature() !== this._menuSignature)
+            this._requestMenuRebuild();
     }
 
     _renderPanel() {
@@ -688,43 +635,18 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 this._panelWorkloads.set(row.key, meter);
                 this._panelWorkloadBox.add_child(meter);
             }
-            updatePanelWorkload(meter, row, displayValue, this.showPanelLabels === true);
+            updatePanelWorkload(meter, row, displayValue);
             meter.visible = true;
         }
         this._panelEmptyLabel.visible = false;
 
-        const lines = [];
+        const lines = ['Until next weekly reset'];
         for (const row of paceRows)
-            lines.push(`${row.label}: ${this._model.panelWorkloadLabel(row)} · ${row.detail}`);
-        const runway = this._view.runway;
-        if (runway.available) {
-            const causes = runway.causes.length ? ` · ${runway.causes.join(' + ')}` : '';
-            const coverage = runway.complete ? '' : ` · ${runway.coverageText}`;
-            lines.push(`Runway: ${runway.value} · ${runway.summary}${causes}${coverage}`);
-        }
-        const degraded = this._view.accounts
-            .filter(account => account.state.key !== 'available')
-            .map(account => `${account.name}: ${account.state.label}`);
-        lines.push(
-            `Accounts: ${this._view.pool.defaultRoutable} of ${this._view.pool.configured} available` +
-            `${degraded.length ? ` · ${degraded.join(', ')}` : ''}`
-        );
-        for (const overload of this._view.providerOverloads) {
-            const scope = overload.providerWide ? 'provider-wide' : 'provider or model scope';
-            const retry = overload.until
-                ? ` · retry ${this._model.formatReset(overload.until, this._view.nowMs)}`
-                : overload.probeActive ? ' · recovery probe active' : '';
-            lines.push(`${overload.provider} ${scope} overload ${overload.state}${retry}`);
-        }
-        const forecastErrors = [...new Set([
-            this._lastRunwayError, this._lastPacingError, this._lastWorkloadHeadroomError,
-        ].filter(Boolean))];
-        if (forecastErrors.length)
-            lines.push(`Forecast refresh failed: ${forecastErrors.join(' · ')}`);
-        if (this._lastError)
-            lines.push(`Last refresh failed: ${this._lastError}`);
-        else if (this._lastSuccess)
-            lines.push(`Updated ${this._model.formatDuration(Date.now() - this._lastSuccess)} ago`);
+            lines.push(`${row.label}: ${row.valueText}`);
+        if (paceRows.some(row => row.valueText.includes('*')))
+            lines.push('* Conservative family bound');
+        if (this._lastError || this._lastWorkloadHeadroomError)
+            lines.push('Refresh failed');
         this.set_applet_tooltip(lines.join('\n'));
     }
 
@@ -752,27 +674,15 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 window.forecastConfidence,
             ]),
         ]);
-        const overloads = (view?.providerOverloads || []).map(overload => [
-            overload.key,
-            overload.until,
-            overload.accountCount,
-        ]);
         return JSON.stringify([
             Boolean(this._accounts),
             this._model.normalizeBaseUrl(this.apiUrl),
             view?.pool || null,
-            view?.paceRows || null,
-            view?.pacing || null,
-            view?.runway || null,
             accounts,
-            overloads,
             this._lastError || '',
-            this._lastRunwayError || '',
-            this._lastPacingError || '',
-            this._lastWorkloadHeadroomError || '',
-            this._lastSuccess ? 1 : 0,
+            this._lastSuccess || 0,
             this._refreshing ? 1 : 0,
-        ], (key, value) => key === 'ageMs' ? undefined : value);
+        ]);
     }
 
     _requestMenuRebuild() {
@@ -805,71 +715,6 @@ class ClankermuxUsageApplet extends Applet.Applet {
             subtitle += ' · cached';
         subtitle += ` · ${this._lastRefreshText()}`;
         this.menu.addMenuItem(new InfoMenuItem('Clankermux usage', subtitle));
-
-        this.menu.addMenuItem(new PaceSummaryMenuItem(this._view.paceRows, this._iconDirectory));
-
-        for (const item of this._view.pacing.classes) {
-            const lift = item.fiveHour.nextLiftAt
-                ? `Next relief ${this._model.formatReset(item.fiveHour.nextLiftAt, this._view.nowMs)}` : '';
-            this.menu.addMenuItem(new InfoMenuItem(
-                `${item.label} · Five-hour constraints${item.stale ? ' · Stale' : ''}`,
-                [item.fiveHour.summary, lift, item.burnText,
-                    item.utilizationPct === null ? 'Weekly usage unknown' : `${item.utilizationPct}% weekly usage (least-used account)`,
-                    item.willRunOut ? `${item.willRunOut} of ${item.eligibleTotal} accounts projected to hit 100% by reset` : '',
-                    item.singlePointOfFailure ? 'No failover account' : '',
-                    this._view.pacing.freshnessText].filter(Boolean).join('\n')
-            ));
-        }
-
-        const failedFeeds = [
-            ['Runway', this._lastRunwayError, this._runway, this._runwayReceivedAt],
-            ['Class pacing', this._lastPacingError, this._pacing, this._pacingReceivedAt],
-            ['Workload headroom', this._lastWorkloadHeadroomError,
-                this._workloadHeadroom, this._workloadHeadroomReceivedAt],
-        ].filter(([, error]) => Boolean(error));
-        if (failedFeeds.length) {
-            const cached = failedFeeds.filter(([, , resource]) => Boolean(resource)).length;
-            const details = failedFeeds.map(([label, error, resource, receivedAt]) => {
-                const timestamp = this._model.formatTimestamp(receivedAt);
-                const age = this._model.formatDuration(Date.now() - receivedAt);
-                return `${label}: ${error} · ` +
-                    `${resource ? `last success ${timestamp} (${age} ago)` : 'no cached reading'}`;
-            });
-            this.menu.addMenuItem(new InfoMenuItem(
-                cached === failedFeeds.length ? 'Forecasts cached' :
-                    cached === 0 ? 'Forecasts unavailable' : 'Forecasts partly cached',
-                details.join('\n'),
-                'warning'
-            ));
-        }
-
-        const runway = this._view.runway;
-        const runwayDetails = [
-            runway.summary,
-            'Worst observed API-key pool; workload headroom may not apply to restricted keys',
-            runway.causes.length ? `Cause: ${runway.causes.join(' + ')}` : '',
-            runway.available && !runway.complete ? runway.coverageText : '',
-        ].filter(Boolean);
-        const runwayStyle = runway.severity === 'critical'
-            ? 'error'
-            : runway.severity === 'warning' ? 'warning' : '';
-        this.menu.addMenuItem(new InfoMenuItem(
-            `Runway${runway.stale ? ' · stale' : ''} · ${runway.value}`,
-            runwayDetails.join(' · '),
-            runwayStyle
-        ));
-        for (const overload of this._view.providerOverloads) {
-            const scope = overload.providerWide ? 'Provider-wide breaker' : 'Provider/model breaker';
-            const recovery = overload.until
-                ? `retry ${this._model.formatReset(overload.until, this._view.nowMs)}`
-                : overload.probeActive ? 'recovery probe active' : 'awaiting recovery probe';
-            this.menu.addMenuItem(new InfoMenuItem(
-                `${overload.provider} overload ${overload.state}`,
-                `${scope} · ${overload.accountCount} account${overload.accountCount === 1 ? '' : 's'} · ${recovery}`,
-                'overload'
-            ));
-        }
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         for (const account of this._view.accounts)
             this.menu.addMenuItem(new AccountMenuItem(account, this._model, this._view.nowMs));

@@ -17,15 +17,8 @@
 }
 
 .clankermux-info.error .clankermux-info-title,
-.clankermux-info.error .clankermux-info-subtitle,
-.clankermux-info.overload .clankermux-info-title,
-.clankermux-info.overload .clankermux-info-subtitle {
+.clankermux-info.error .clankermux-info-subtitle {
     color: #ef7777;
-}
-
-.clankermux-info.warning .clankermux-info-title,
-.clankermux-info.warning .clankermux-info-subtitle {
-    color: #e5b95c;
 }
 
 .clankermux-account {
@@ -135,50 +128,14 @@
     spacing: 8px;
 }
 
-.clankermux-panel-workload,
-.clankermux-workload-row {
-    spacing: 4px;
-}
-
-.clankermux-panel-workload-label {
-    font-size: 0.88em;
-    font-weight: bold;
+.clankermux-panel-workload {
+    spacing: 3px;
 }
 
 .clankermux-panel-pace-value {
     font-weight: bold;
 }
 
-.clankermux-workload-value {
-    color: #8bd49c;
-    font-weight: bold;
-}
-
-.clankermux-workload-value.warning {
-    color: #e5b95c;
-}
-
-.clankermux-workload-value.critical {
-    color: #ef7777;
-}
-
-.clankermux-workload-value.unknown,
 .clankermux-panel-loading {
     color: #a8a8a8;
-}
-
-.clankermux-workloads {
-    min-width: 560px;
-    spacing: 4px;
-    padding-top: 3px;
-    padding-bottom: 5px;
-}
-
-.clankermux-workload-label {
-    width: 72px;
-    font-weight: bold;
-}
-
-.clankermux-workload-value {
-    min-width: 90px;
 }

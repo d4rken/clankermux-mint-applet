@@ -162,7 +162,7 @@ test('a pacing deadline crossing alone requests one forecast refresh', () => {
     assert.equal(h.requests.size, 3);
 });
 
-test('stale transitions update an open popup even while the pointer is inside', () => {
+test('forecast staleness does not rebuild the account popup while hovered', () => {
     const h = appletHarness();
     h.applet.menu.isOpen = true;
     h.applet._menuPointerInside = true;
@@ -171,11 +171,11 @@ test('stale transitions update an open popup even while the pointer is inside', 
     h.applet._renderMenu = () => { rebuilt = true; };
     h.advance(180000);
     h.applet._render();
-    assert.equal(rebuilt, true);
+    assert.equal(rebuilt, false);
     assert.equal(h.applet._view.workloads[1].stale, true);
 });
 
-test('guidance changes update an open popup while the pointer is inside', () => {
+test('guidance changes do not rebuild the account popup while hovered', () => {
     const h = appletHarness();
     h.applet.menu.isOpen = true;
     h.applet._menuPointerInside = true;
@@ -187,7 +187,7 @@ test('guidance changes update an open popup while the pointer is inside', () => 
     h.applet._refresh(false, true);
     h.replyOutlook(response);
     assert.equal(h.applet._view.paceRows[0].valueText, 'Limited evidence');
-    assert.equal(rebuilt, true);
+    assert.equal(rebuilt, false);
 });
 
 test('ordinary account polling stays available during forecast backoff', () => {

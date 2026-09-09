@@ -18,41 +18,19 @@ or an exact agent count. `*` identifies a conservative family bound. Fable is an
 additional restriction within Claude capacity; their percentages cannot be added.
 The F monogram identifies Fable and is not an official brand mark.
 
-The panel explicitly shows Learning, Limited evidence, Unknown, No accounts, Out,
-Reaches reset, or May run out when the server cannot give a numeric adjustment.
-An absent Fable forecast shows Unknown unless family display is disabled.
-Workload names can optionally appear beside the panel icons.
+When no percentage is available, the panel uses short indicators: `Risk` for
+projected exhaustion, `Holds` for reaching the next reset, `?` for unknown or
+limited evidence, `…` for learning, `None` for no accounts, and `Out` for exhausted
+quota. Stale or expired forecasts show `Stale`. Hover for the full state names.
 
-Click the applet for:
+Click the applet for the account utilization bars, availability and reset times,
+plus refresh and dashboard shortcuts. Forecast explanations and long-term advice
+are not displayed in the popup.
 
-- guidance until each workload's next weekly reset, with its own deadline
-- separately labelled long-term advice and its interval
-- evidence, coverage, and reasons for missing percentages
-- five-hour constraints, upcoming relief, and weekly spending context
-- overall quota runway with API-key pool coverage and restriction caveats
-- account availability, credentials, overloads, observations, and quota windows
-- manual refresh and a shortcut to the Clankermux dashboard
-
-Claude/GPT spending ratios describe the least-used account relative to an even
-weekly spending baseline. They do not drive workload capacity recommendations.
 Only server states `increase` and `reduce` permit numeric advice. A raw percentage
-can coexist with `uncertain`; the applet suppresses that number. Unquantified
-outcomes never imply unlimited room or a severe required cut.
-
-Family coverage distinguishes accounts that have not used the family this week
-from other unreadable accounts. Both remain excluded from the projection;
-untouched accounts do not imply a 0% usage reading. Older servers without
-`unopenedAccounts` retain the combined unreadable count.
-
-Servers without guidance states show Unknown with labelled raw forecast context
-in the popup. Missing or invalid next-reset deadlines show Unavailable, with
-long-term context separately labelled. Passed deadlines show Expired and trigger
-refresh; the widget never assumes quota has recovered.
-
-Paused accounts remain visible in account details but do not contribute to the
-server's workload forecasts. The applet does not average account usage or add
-capacity for banked reset credits. Individual low-confidence account forecasts
-remain qualified in the details.
+can coexist with `uncertain`; the applet suppresses that number. Missing or legacy
+forecast fields never fall back to a burn-ratio calculation. Paused accounts and
+banked reset credits are handled by the server's forecast.
 
 ## Install
 
@@ -72,7 +50,7 @@ http://127.0.0.1:8080
 
 Right-click the applet and choose **Configure** to enter a different hostname,
 IP address, or complete HTTP/HTTPS URL. The settings window also controls the
-polling interval, panel names, popup runway warning duration, and family visibility.
+polling interval, account order, and family visibility.
 
 ## API and security
 
@@ -94,8 +72,7 @@ refresh may return the same computation.
 
 Forecasts become stale on a fetch failure, when their computation timestamp is
 missing, or when `generatedAt` is at least three minutes old. Fetching the same
-cached response does not make it fresh. Stale advice goes neutral and keeps its
-last reading in the popup. Computation time is distinct from each account's
+cached response does not make it fresh. Stale advice is replaced by the word Stale. Computation time is distinct from each account's
 usage observation time. Countdowns and freshness update between network polls.
 
 Account names are public. Credentials, API-key secrets, prompts, and response
