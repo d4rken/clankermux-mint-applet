@@ -115,6 +115,14 @@
     color: #a8a8a8;
 }
 
+.clankermux-summary {
+    spacing: 3px;
+}
+
+.clankermux-summary-line {
+    spacing: 6px;
+}
+
 .clankermux-forecast.warning {
     color: #e5b95c;
 }

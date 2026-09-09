@@ -14,9 +14,24 @@ function appletHarness() {
     let nextTimer = 1;
     const timers = new Map();
     const requests = new Map();
+    class Actor {
+        constructor(properties = {}) { Object.assign(this, properties); this.children = []; this.visible = true; }
+        add_child(child) { this.children.push(child); }
+        set_text(text) { this.text = text; }
+        set_style_class_name(name) { this.style_class = name; }
+        set_accessible_name(name) { this.accessible_name = name; }
+    }
+    class MenuItem {
+        constructor() { this.actor = new Actor(); }
+        addActor(child) { this.actor.add_child(child); }
+    }
     const imports = {
-        ui: { applet: { Applet: class {} }, popupMenu: { PopupBaseMenuItem: class {} } },
-        gi: { Gio: { Cancellable: class { cancel() {} } } },
+        ui: { applet: { Applet: class {} }, popupMenu: { PopupBaseMenuItem: MenuItem } },
+        gi: {
+            Gio: { Cancellable: class { cancel() {} }, icon_new_for_string(path) { return path; } },
+            St: { BoxLayout: Actor, Label: Actor, Icon: Actor, IconType: { SYMBOLIC: 1 } },
+            Clutter: { ActorAlign: { CENTER: 1 } },
+        },
         misc: {},
         mainloop: {
             timeout_add_seconds(seconds, callback) {
@@ -27,7 +42,7 @@ function appletHarness() {
             source_remove(id) { timers.delete(id); },
         },
     };
-    const AppletClass = vm.runInNewContext(`${source}\nClankermuxUsageApplet`, {
+    const { AppletClass, SummaryClass } = vm.runInNewContext(`${source}\n({ AppletClass: ClankermuxUsageApplet, SummaryClass: ForecastSummaryMenuItem })`, {
         imports,
         Date: class extends Date { static now() { return now; } },
     });
@@ -40,8 +55,11 @@ function appletHarness() {
         _runway: fixtures.runway(), _pacing: fixtures.pacing(),
         _workloadHeadroom: fixtures.nextResetWorkloads(),
         _lastError: '', _lastRunwayError: '', _lastPacingError: '', _lastWorkloadHeadroomError: '',
+        _lastAccountsError: '',
         _requestGeneration: 0, _refreshing: false, _destroyed: false,
         requestTimeout: 8,
+        _panelEmptyLabel: new Actor(), _panelWorkloadBox: new Actor(), _panelWorkloads: new Map(),
+        set_applet_tooltip(text) { this.tooltip = text; },
         menu: { isOpen: false },
         _getJson(path, generation, cancellable, callback) { requests.set(path, callback); },
         _createSession() {},
@@ -55,6 +73,8 @@ function appletHarness() {
     applet._render();
     return {
         applet, requests, timers,
+        renderPanel() { AppletClass.prototype._renderPanel.call(applet); },
+        createSummary() { return new SummaryClass(applet._view.paceRows, model, now, '/icons'); },
         advance(ms) { now += ms; },
         reply(path, data, error = null) {
             const callback = requests.get(path);
@@ -69,6 +89,75 @@ function appletHarness() {
         },
     };
 }
+
+test('panel mode switches between actual usage and guidance while reusing icons', () => {
+    const h = appletHarness();
+    h.applet._accounts.forEach(account => { account.measurementState = 'fresh'; });
+    h.applet._render();
+    h.renderPanel();
+    const meters = [...h.applet._panelWorkloads.values()];
+    assert.deepEqual(meters.map(m => m._clankermuxValue.text), ['10%', '70%', '70%']);
+    assert.match(h.applet.tooltip, /Weekly usage · equal account average/);
+    h.applet.panelDisplay = 'forecast';
+    h.renderPanel();
+    assert.equal(h.applet._panelWorkloads.get('class:codex'), meters[0]);
+    assert.equal(meters[0]._clankermuxValue.text, '↑ ~25% room');
+    assert.match(h.applet.tooltip, /Until next weekly reset/);
+    h.applet.panelDisplay = 'usage';
+    h.applet.showScopedLimits = false;
+    h.applet._render();
+    h.renderPanel();
+    assert.equal(meters[2].visible, false);
+    assert.equal(meters[0]._clankermuxValue.text, '10%');
+});
+
+test('summary immediately withdraws stale or expired advice without rebuilding hovered bars', () => {
+    for (const expired of [false, true]) {
+        const h = appletHarness();
+        if (expired) {
+            h.applet._workloadHeadroom.rows[1].nextReset.resetsAt = new Date(fixtures.NOW + 1000).toISOString();
+            h.applet._render();
+        }
+        const summary = h.createSummary();
+        h.applet._forecastSummaryItem = summary;
+        h.applet.menu.isOpen = true;
+        h.applet._menuPointerInside = true;
+        h.applet._menuSignature = h.applet._menuStateSignature();
+        h.applet._renderMenu = () => { assert.fail('Hovered account bars must not be rebuilt'); };
+        h.advance(expired ? 2000 : 180000);
+        h.applet._render();
+        assert.equal(summary._lines.get('class:codex').label.text, `GPT: ${expired ? 'Expired' : 'Stale'}`);
+        assert.match(summary.actor.accessible_name, expired ? /GPT: Expired/ : /GPT: Stale/);
+        assert.equal(h.applet._menuRebuildPending, true);
+    }
+});
+
+test('status failures do not mark fresh account usage cached, but account failures do', () => {
+    const h = appletHarness();
+    h.applet._outlookSchedule.begin(fixtures.NOW);
+    h.applet._outlookSchedule.complete(fixtures.NOW, false);
+    h.applet._refresh();
+    h.reply('/public/v1/accounts', { schema: 'clankermux.public.accounts.v1', accounts: fixtures.accounts() });
+    h.reply('/public/v1/status', null, new Error('status offline'));
+    assert.equal(h.applet._lastAccountsError, '');
+    assert.equal(h.applet._view.providerUsageRows[0].valueText, '10%');
+    h.applet._refresh();
+    h.reply('/public/v1/accounts', null, new Error('accounts offline'));
+    h.reply('/public/v1/status', fixtures.status());
+    assert.equal(h.applet._view.providerUsageRows[0].valueText, '10%*');
+    const failure = h.applet._lastAccountsError;
+    h.applet._refresh(true, true);
+    h.replyOutlook();
+    assert.equal(h.applet._lastAccountsError, failure);
+});
+
+test('a full refresh timeout marks retained account usage cached', () => {
+    const h = appletHarness();
+    h.applet._refresh();
+    h.timers.get(h.applet._refreshWatchdogId)();
+    assert.match(h.applet._lastAccountsError, /timed out/);
+    assert.equal(h.applet._view.providerUsageRows[0].valueText, '10%*');
+});
 
 test('account popup signature follows new window forecasts', () => {
     const h = appletHarness();
@@ -192,6 +281,7 @@ test('forecast staleness does not rebuild the account popup while hovered', () =
     h.applet._render();
     assert.equal(rebuilt, false);
     assert.equal(h.applet._view.workloads[1].stale, true);
+    assert.equal(h.applet._menuRebuildPending, true);
 });
 
 test('guidance changes do not rebuild the account popup while hovered', () => {
@@ -207,6 +297,7 @@ test('guidance changes do not rebuild the account popup while hovered', () => {
     h.replyOutlook(response);
     assert.equal(h.applet._view.paceRows[0].valueText, 'Limited evidence');
     assert.equal(rebuilt, false);
+    assert.equal(h.applet._menuRebuildPending, true);
 });
 
 test('ordinary account polling stays available during forecast backoff', () => {

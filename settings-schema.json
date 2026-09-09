@@ -10,7 +10,7 @@
     "display-page": {
       "type": "page",
       "title": "Display",
-      "sections": ["details-section"]
+      "sections": ["panel-section", "details-section"]
     },
     "connection-section": {
       "type": "section",
@@ -26,6 +26,11 @@
       "type": "section",
       "title": "Popup",
       "keys": ["show-scoped-limits", "default-candidate-first"]
+    },
+    "panel-section": {
+      "type": "section",
+      "title": "Panel",
+      "keys": ["panel-display"]
     }
   },
   "api-url": {
@@ -60,6 +65,16 @@
     "type": "switch",
     "default": true,
     "description": "Show model-family indicators and utilization bars"
+  },
+  "panel-display": {
+    "type": "combobox",
+    "default": "usage",
+    "description": "Panel display",
+    "options": {
+      "Combined weekly usage": "usage",
+      "Forecast advice": "forecast"
+    },
+    "tooltip": "Usage averages the weekly percentages across each provider's accounts, with equal weight per account. Forecast advice shows server guidance until the next weekly reset."
   },
   "default-candidate-first": {
     "type": "switch",

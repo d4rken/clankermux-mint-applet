@@ -49,7 +49,7 @@ test('learning reasons stay learning after readyAt, independently of weekly esti
             forecast: { state: 'learning', reason, readyAt: at(-HOUR), exhaustsAt: null, lowConfidence: null },
         });
         const windows = model.accountWindows(a, true, 80, NOW);
-        assert.equal(windows[0].forecastText, 'learning');
+        assert.equal(windows[0].forecastText, { no_usage: 'no usage', unstarted: 'unstarted', short_history: 'learning' }[reason]);
         assert.equal(windows[0].willExhaust, null);
         assert.equal(windows[1].forecastText, 'out ~2h');
     }
@@ -93,7 +93,7 @@ test('server example retains idle session learning alongside a weekly estimate',
     const example = require('./api-examples/accounts.partial-learning.json');
     const windows = model.accountWindows(example.accounts[0], true, 80, Date.parse(example.generatedAt));
     assert.deepEqual(windows.map(w => w.percent), [0, 60]);
-    assert.equal(windows[0].forecastText, 'learning');
+    assert.equal(windows[0].forecastText, 'no usage');
     assert.equal(windows[0].forecastDescription, 'No usage measured');
     assert.equal(windows[0].willExhaust, null);
     assert.equal(windows[1].willExhaust, true);

@@ -131,7 +131,8 @@ var UsageModel = (() => {
             };
             if (!Object.prototype.hasOwnProperty.call(reasons, forecast.reason))
                 return unavailable;
-            return { ...unavailable, forecastText: 'learning', forecastDescription: reasons[forecast.reason] };
+            const labels = { no_usage: 'no usage', unstarted: 'unstarted', short_history: 'learning' };
+            return { ...unavailable, forecastText: labels[forecast.reason], forecastDescription: reasons[forecast.reason] };
         }
         if (forecast.state !== 'projected' || forecast.reason != null ||
             resetsMs === null || timestampMs(raw?.observedAt) === null)
@@ -311,6 +312,34 @@ var UsageModel = (() => {
             }
         }
         return pools;
+    }
+
+    function providerUsageRows(accounts, showScoped = true, nowMs = Date.now(), fetchFailed = false) {
+        return WORKLOAD_TARGETS.filter(target => showScoped || target.key !== 'family:fable').map(target => {
+            const family = target.key === 'family:fable';
+            const provider = target.key === 'class:codex' ? 'codex' : 'anthropic';
+            const members = (accounts || []).filter(account => account.provider === provider &&
+                String(account.measurementState || '').toLowerCase() !== 'not_applicable');
+            const readings = members.map(account => {
+                const window = (account.windows || []).find(w => family
+                    ? w.kind === 'weekly_scoped' && w.scopeId === 'fable'
+                    : w.kind === 'seven_day' && w.scopeId == null);
+                const percent = clampNumber(window?.utilizationPct);
+                const reset = timestampMs(window?.resetsAt);
+                return { percent, stale: account.measurementState !== 'fresh' ||
+                    timestampMs(window?.observedAt) === null || reset !== null && reset <= nowMs };
+            }).filter(reading => reading.percent !== null);
+            const count = readings.length;
+            const total = members.length;
+            const percent = count ? Math.round(readings.reduce((sum, reading) => sum + reading.percent, 0) / count) : null;
+            const stale = fetchFailed || readings.some(reading => reading.stale);
+            const partial = count < total;
+            const valueText = percent === null ? total ? '?' : 'None' : `${percent}%${stale || partial ? '*' : ''}`;
+            const tooltip = `${target.label}: ${percent === null ? 'usage unavailable' : `${percent}% weekly used`} · ${count}/${total} accounts` +
+                (partial ? ' · partial' : '') + (stale ? ' · cached' : '');
+            return { ...target, percent, valueText, tooltip, stale, partial, accountCount: count, totalAccounts: total,
+                severity: stale || partial || percent === null ? 'unknown' : _poolSeverity(percent, DEFAULT_USAGE_WARNING_PCT) };
+        });
     }
 
     function providerOverloads(status, accounts = []) {
@@ -654,6 +683,23 @@ var UsageModel = (() => {
         return parts.join(' · ');
     }
 
+    function forecastSummary(row, nowMs = Date.now()) {
+        let headline = `${row.label}: ${row.valueText}`;
+        if (row.stale || row.expired)
+            return headline;
+        if (row.basis === 'bound' && row.percent != null)
+            headline = headline.replace(/\*$/, '') + ' (bound)';
+        const exhaustsMs = timestampMs(row.exhaustsAt);
+        const resetsMs = timestampMs(row.resetsAt);
+        if (row.valueText === 'May run out' && exhaustsMs !== null && resetsMs !== null && exhaustsMs < resetsMs)
+            headline += exhaustsMs <= nowMs ? ' ~now' : ` ~${formatDuration(exhaustsMs - nowMs)}`;
+        if (Number.isFinite(row.eligibleAccounts) && (row.unreadableAccounts > 0 || row.learningAccounts > 0))
+            headline += ` · ${Math.max(0, row.eligibleAccounts - row.unreadableAccounts)}/${row.eligibleAccounts} modeled`;
+        if (row.learningAccounts > 0)
+            headline += ` · ${row.learningAccounts} learning`;
+        return headline;
+    }
+
     function _accountName(accountId, accounts) {
         if (!accountId)
             return null;
@@ -929,6 +975,7 @@ var UsageModel = (() => {
             providerOverloads: overloads,
             pace: paceNow,
             paceRows,
+            providerUsageRows: providerUsageRows(list, options.showScoped !== false, nowMs, options.accountsFetchFailed),
             pacing: pacingNow,
             runway: runwayNow,
             workloads: workloadNow.rows,
@@ -997,6 +1044,8 @@ var UsageModel = (() => {
         measurementNotice,
         normalizeBaseUrl,
         panelWorkloadLabel,
+        providerUsageRows,
+        forecastSummary,
         workloadTooltipLine,
         paceView,
         pacingView,

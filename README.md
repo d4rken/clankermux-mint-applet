@@ -6,13 +6,29 @@
 A native Linux Mint/Cinnamon panel applet for monitoring the accounts behind a
 [Clankermux](https://github.com/d4rken/clankermux) proxy.
 
-The panel shows one icon and advice line per workload, arranged horizontally:
+The panel defaults to combined weekly usage, with one icon per provider and an
+optional Fable indicator:
+
+```text
+[OpenAI] 50%   [Anthropic] 30%   [F] 95%
+```
+
+Each value is the average of that provider's readable weekly account percentages,
+with equal weight per account, including paused accounts. Fable uses its own
+weekly limits. These are account averages, not capacity-weighted totals; the API
+does not provide quota sizes. Missing readings are excluded rather than counted
+as zero. `*` marks partial or cached readings; hover shows how many accounts are
+included. Five-hour usage stays in the account bars.
+Accounts whose usage measurement is not applicable are excluded. Missing family
+windows count as missing readings; no zero usage is inferred.
+
+Choose **Configure > Display > Panel display > Forecast advice** to show:
 
 ```text
 [OpenAI] ↑ ~25% room   [Anthropic] ↓ ~20% pace   [F] ↓ ~20% pace*
 ```
 
-All headlines use `/workload-headroom` guidance until the next weekly reset.
+Forecast headlines use `/workload-headroom` guidance until the next weekly reset.
 The percentage describes an approximate change in work rate, not quota remaining
 or an exact agent count. `*` identifies a conservative family bound. Fable is an
 additional restriction within Claude capacity; their percentages cannot be added.
@@ -26,12 +42,17 @@ Hover for full states, modeled coverage and the tested pace range when relevant.
 `Learn` describes coverage still learning; a pace percentage may remain unavailable afterward.
 
 Click the applet for the account utilization bars, availability and reset times,
-plus refresh and dashboard shortcuts. Each bar shows a compact window forecast:
-`out ~2h`, `learning`, or `—`. Exhaustion is flagged only before a known reset.
+plus a three-line forecast summary. Click the summary to open the dashboard.
+The summary remains available in both panel modes. Each bar shows a compact
+window forecast: `out ~2h`, `no usage`, `unstarted`, `learning`, or `—`.
+Exhaustion is flagged only before a known reset.
 These estimates use `windows[].forecast`; missing forecasts on older servers
 remain unavailable even when a regression `prediction` exists. Learning does
 not end just because `readyAt` passes. Low-confidence estimates use warning
 color and are qualified in the accessible description.
+Zero-usage windows need measured activity; waiting alone need not resolve them.
+Short-history windows need at least an hour of usable burn history and a fresh
+reading. Their `readyAt` is an earliest useful reading, not a readiness guarantee.
 
 Only server states `increase` and `reduce` permit numeric advice. A raw percentage
 can coexist with `uncertain`; the applet suppresses that number. Missing or legacy

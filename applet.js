@@ -105,6 +105,39 @@ function updatePanelWorkload(meter, row, displayValue) {
     meter.set_accessible_name(`${row.label}: ${row.valueText}`);
 }
 
+class ForecastSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
+    constructor(rows, model, nowMs, iconDirectory) {
+        super();
+        this._model = model;
+        this._lines = new Map();
+        const box = new St.BoxLayout({ vertical: true, style_class: 'clankermux-summary' });
+        box.add_child(new St.Label({ text: 'Forecast until next weekly reset ↗', style_class: 'clankermux-info-title' }));
+        for (const row of rows) {
+            const line = new St.BoxLayout({ style_class: 'clankermux-summary-line' });
+            line.add_child(createWorkloadIcon(row, iconDirectory));
+            const label = new St.Label({ style_class: 'clankermux-info-subtitle' });
+            line.add_child(label);
+            box.add_child(line);
+            this._lines.set(row.key, { line, label });
+        }
+        this.addActor(box, { expand: true });
+        this.update(rows, nowMs);
+    }
+
+    update(rows, nowMs) {
+        const keys = new Set(rows.map(row => row.key));
+        for (const [key, item] of this._lines)
+            item.line.visible = keys.has(key);
+        for (const row of rows) {
+            const item = this._lines.get(row.key);
+            if (item)
+                item.label.set_text(this._model.forecastSummary(row, nowMs));
+        }
+        this.actor.set_accessible_name('Open dashboard. Forecast until next weekly reset. ' +
+            rows.filter(row => this._lines.has(row.key)).map(row => this._model.forecastSummary(row, nowMs)).join('. '));
+    }
+}
+
 class AccountMenuItem extends PopupMenu.PopupBaseMenuItem {
     constructor(account, model, nowMs) {
         super({ reactive: false });
@@ -192,6 +225,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._view = null;
         this._lastSuccess = 0;
         this._lastError = '';
+        this._lastAccountsError = '';
         this._menuSignature = '';
         this._menuPointerInside = false;
         this._menuRebuildPending = false;
@@ -217,7 +251,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._panelContent = new St.BoxLayout({ style_class: 'clankermux-panel-content' });
         this._panelWorkloadBox = new St.BoxLayout({ style_class: 'clankermux-panel-workloads' });
         this._panelEmptyLabel = new St.Label({
-            text: 'pace …',
+            text: 'usage …',
             style_class: 'clankermux-panel-loading',
             y_align: Clutter.ActorAlign.CENTER,
         });
@@ -256,6 +290,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this.settings.bind('api-url', 'apiUrl', this._onConnectionSettingsChanged.bind(this));
         this.settings.bind('refresh-interval', 'refreshInterval', this._onPollingSettingsChanged.bind(this));
         this.settings.bind('request-timeout', 'requestTimeout', this._onConnectionSettingsChanged.bind(this));
+        this.settings.bind('panel-display', 'panelDisplay', this._render.bind(this));
         this.settings.bind('show-scoped-limits', 'showScopedLimits', this._render.bind(this));
         this.settings.bind('default-candidate-first', 'defaultCandidateFirst', this._render.bind(this));
 
@@ -303,6 +338,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._lastWorkloadHeadroomError = '';
         this._lastSuccess = 0;
         this._lastError = '';
+        this._lastAccountsError = '';
         this._createSession();
         this._render();
         this._refresh(true);
@@ -477,8 +513,11 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 );
             }
 
-            if (!outlookOnly && !accountsError)
-                this._accounts = accountsResult.accounts;
+            if (!outlookOnly) {
+                this._lastAccountsError = accountsError ? this._errorMessage(accountsError) : '';
+                if (!accountsError)
+                    this._accounts = accountsResult.accounts;
+            }
             if (!outlookOnly && !statusError) {
                 this._status = statusResult;
                 this._statusReceivedAt = statusReceivedAt || Date.now();
@@ -531,8 +570,10 @@ class ClankermuxUsageApplet extends Applet.Applet {
             this._refreshCancellable = null;
             cancellable.cancel();
             const timeoutError = `Refresh timed out after ${timeoutSeconds}s`;
-            if (!outlookOnly)
+            if (!outlookOnly) {
                 this._lastError = timeoutError;
+                this._lastAccountsError = timeoutError;
+            }
             if (fetchOutlook) {
                 this._lastRunwayError = timeoutError;
                 this._lastPacingError = timeoutError;
@@ -606,16 +647,20 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 runwayFetchFailed: Boolean(this._lastRunwayError),
                 pacingFetchFailed: Boolean(this._lastPacingError),
                 workloadHeadroomFetchFailed: Boolean(this._lastWorkloadHeadroomError),
+                accountsFetchFailed: Boolean(this._lastAccountsError),
             }
         );
         this._renderPanel();
+        if (this.menu.isOpen)
+            this._forecastSummaryItem?.update(this._view.paceRows, this._view.nowMs);
         if (this.menu.isOpen && this._menuStateSignature() !== this._menuSignature)
             this._requestMenuRebuild();
     }
 
     _renderPanel() {
+        const showForecast = this.panelDisplay === 'forecast';
         if (!this._accounts) {
-            this._panelEmptyLabel.set_text(this._lastError ? 'pace !' : 'pace …');
+            this._panelEmptyLabel.set_text(`${showForecast ? 'pace' : 'usage'} ${this._lastError ? '!' : '…'}`);
             this._panelEmptyLabel.visible = true;
             for (const meter of this._panelWorkloads.values())
                 meter.visible = false;
@@ -623,14 +668,12 @@ class ClankermuxUsageApplet extends Applet.Applet {
             return;
         }
 
-        const paceRows = this._view.paceRows;
-        const visibleKeys = new Set(paceRows.map(row => row.key));
+        const rows = showForecast ? this._view.paceRows : this._view.providerUsageRows;
+        const visibleKeys = new Set(rows.map(row => row.key));
         for (const [key, meter] of this._panelWorkloads)
             meter.visible = visibleKeys.has(key);
-        for (const row of paceRows) {
-            const displayValue = this._model.panelWorkloadLabel(
-                row
-            );
+        for (const row of rows) {
+            const displayValue = showForecast ? this._model.panelWorkloadLabel(row) : row.valueText;
             let meter = this._panelWorkloads.get(row.key);
             if (!meter) {
                 meter = createPanelWorkload(row, this._iconDirectory);
@@ -642,12 +685,14 @@ class ClankermuxUsageApplet extends Applet.Applet {
         }
         this._panelEmptyLabel.visible = false;
 
-        const lines = ['Until next weekly reset'];
-        for (const row of paceRows)
-            lines.push(this._model.workloadTooltipLine(row));
-        if (paceRows.some(row => row.valueText.includes('*')))
+        const lines = [showForecast ? 'Until next weekly reset' : 'Weekly usage · equal account average'];
+        for (const row of rows)
+            lines.push(showForecast ? this._model.workloadTooltipLine(row) : row.tooltip);
+        if (showForecast && rows.some(row => row.valueText.includes('*')))
             lines.push('* Conservative family bound');
-        if (this._lastError || this._lastWorkloadHeadroomError)
+        if (!showForecast && rows.some(row => row.valueText.includes('*')))
+            lines.push('* Partial or cached readings');
+        if (this._lastError || showForecast && this._lastWorkloadHeadroomError)
             lines.push('Refresh failed');
         this.set_applet_tooltip(lines.join('\n'));
     }
@@ -684,6 +729,8 @@ class ClankermuxUsageApplet extends Applet.Applet {
             this._model.normalizeBaseUrl(this.apiUrl),
             view?.pool || null,
             accounts,
+            (view?.paceRows || []).map(row => [row.key, row.valueText, row.exhaustsAt, row.resetsAt,
+                row.eligibleAccounts, row.unreadableAccounts, row.learningAccounts, row.stale, row.expired]),
             this._lastError || '',
             this._lastSuccess || 0,
             this._refreshing ? 1 : 0,
@@ -699,6 +746,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
     }
 
     _renderMenu() {
+        this._forecastSummaryItem = null;
         this._menuSignature = this._menuStateSignature();
         this.menu.removeAll();
         if (!this._accounts) {
@@ -720,6 +768,11 @@ class ClankermuxUsageApplet extends Applet.Applet {
             subtitle += ' · cached';
         subtitle += ` · ${this._lastRefreshText()}`;
         this.menu.addMenuItem(new InfoMenuItem('Clankermux usage', subtitle));
+
+        const forecastItem = new ForecastSummaryMenuItem(this._view.paceRows, this._model, this._view.nowMs, this._iconDirectory);
+        this._forecastSummaryItem = forecastItem;
+        forecastItem.connect('activate', () => this._openDashboard());
+        this.menu.addMenuItem(forecastItem);
 
         for (const account of this._view.accounts)
             this.menu.addMenuItem(new AccountMenuItem(account, this._model, this._view.nowMs));
@@ -755,12 +808,14 @@ class ClankermuxUsageApplet extends Applet.Applet {
             'web-browser-symbolic',
             St.IconType.SYMBOLIC
         );
-        dashboardItem.connect('activate', () => {
-            const url = this._model.normalizeBaseUrl(this.apiUrl);
-            if (url)
-                Gio.app_info_launch_default_for_uri(url, global.create_app_launch_context());
-        });
+        dashboardItem.connect('activate', () => this._openDashboard());
         this.menu.addMenuItem(dashboardItem);
+    }
+
+    _openDashboard() {
+        const url = this._model.normalizeBaseUrl(this.apiUrl);
+        if (url)
+            Gio.app_info_launch_default_for_uri(url, global.create_app_launch_context());
     }
 
     on_applet_clicked() {
