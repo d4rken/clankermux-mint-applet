@@ -68,8 +68,8 @@ function createUsageBar(window, model, nowMs) {
         y_align: Clutter.ActorAlign.CENTER,
     }));
     row.add_child(new St.Label({
-        text: window.projectedAtReset === null ? '' : `→${Math.round(window.projectedAtReset)}%`,
-        style_class: `clankermux-forecast ${window.severity}`,
+        text: window.forecastText,
+        style_class: `clankermux-forecast ${window.forecastSeverity}`,
         y_align: Clutter.ActorAlign.CENTER,
     }));
     row.add_child(new St.Label({
@@ -77,6 +77,8 @@ function createUsageBar(window, model, nowMs) {
         style_class: 'clankermux-reset',
         y_align: Clutter.ActorAlign.CENTER,
     }));
+    row.set_accessible_name(`${window.label}: ${window.percent}%. ${window.forecastDescription}. ` +
+        `Reset ${model.formatReset(window.resetsAt, nowMs)}`);
     return row;
 }
 
@@ -642,7 +644,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
 
         const lines = ['Until next weekly reset'];
         for (const row of paceRows)
-            lines.push(`${row.label}: ${row.valueText}`);
+            lines.push(this._model.workloadTooltipLine(row));
         if (paceRows.some(row => row.valueText.includes('*')))
             lines.push('* Conservative family bound');
         if (this._lastError || this._lastWorkloadHeadroomError)
@@ -668,7 +670,10 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 window.label,
                 window.percent,
                 window.resetsAt,
-                window.projectedAtReset,
+                window.exhaustsAt,
+                window.willExhaust,
+                window.forecastDescription,
+                window.forecastSeverity,
                 window.severity,
                 window.stale,
                 window.forecastConfidence,

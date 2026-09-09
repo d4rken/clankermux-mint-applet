@@ -113,7 +113,48 @@ var UsageModel = (() => {
         return humanizeStatus(window.scopeId || window.kind);
     }
 
-    function accountWindows(account, showScoped = true, warningThreshold = DEFAULT_USAGE_WARNING_PCT) {
+    function _windowForecast(raw, measurementState, nowMs) {
+        const unavailable = {
+            forecastText: '—', forecastDescription: 'Forecast unavailable',
+            forecastSeverity: 'unknown', forecastConfidence: 'unknown',
+            exhaustsAt: null, willExhaust: null,
+        };
+        const forecast = raw?.forecast;
+        const resetsMs = timestampMs(raw?.resetsAt);
+        if (!forecast || measurementState !== 'fresh' || resetsMs !== null && resetsMs <= nowMs)
+            return unavailable;
+        if (forecast.state === 'learning') {
+            const reasons = {
+                no_usage: 'No usage measured',
+                unstarted: 'Window has not started',
+                short_history: 'Not enough consumption history',
+            };
+            if (!Object.prototype.hasOwnProperty.call(reasons, forecast.reason))
+                return unavailable;
+            return { ...unavailable, forecastText: 'learning', forecastDescription: reasons[forecast.reason] };
+        }
+        if (forecast.state !== 'projected' || forecast.reason != null ||
+            resetsMs === null || timestampMs(raw?.observedAt) === null)
+            return unavailable;
+        const exhaustsMs = timestampMs(forecast.exhaustsAt);
+        if (forecast.exhaustsAt != null && exhaustsMs === null)
+            return unavailable;
+        const willExhaust = exhaustsMs !== null && exhaustsMs < resetsMs;
+        const lowConfidence = forecast.lowConfidence !== false;
+        return {
+            exhaustsAt: exhaustsMs === null ? null : forecast.exhaustsAt,
+            willExhaust,
+            forecastConfidence: lowConfidence ? 'low' : 'high',
+            forecastText: willExhaust
+                ? exhaustsMs <= nowMs ? 'out ~now' : `out ~${formatDuration(exhaustsMs - nowMs)}` : '—',
+            forecastDescription: (lowConfidence ? 'Low-confidence estimate: ' : '') +
+                (willExhaust ? `exhaustion ${formatTimestamp(exhaustsMs)}, before reset` :
+                    exhaustsMs === null ? 'No exhaustion estimated' : 'Reset precedes estimated exhaustion'),
+            forecastSeverity: willExhaust ? lowConfidence ? 'warning' : 'critical' : 'unknown',
+        };
+    }
+
+    function accountWindows(account, showScoped = true, warningThreshold = DEFAULT_USAGE_WARNING_PCT, nowMs = Date.now()) {
         const windows = [];
         const measurementState = String(account?.measurementState || 'other').toLowerCase();
         for (const [index, raw] of (account?.windows || []).entries()) {
@@ -125,13 +166,9 @@ var UsageModel = (() => {
             if (percent === null)
                 continue;
 
-            const prediction = raw?.prediction || null;
-            const projectedAtReset = clampNumber(prediction?.predictedUtilizationAtResetPct);
-            const lowConfidence = Boolean(prediction?.lowConfidence);
-            const willExhaust = prediction ? Boolean(prediction.willExhaustBeforeReset) : null;
-            const certainlyExhausts = percent >= 100 || willExhaust === true && !lowConfidence;
-            const nearExhaustion = willExhaust === true || percent >= warningThreshold ||
-                projectedAtReset !== null && projectedAtReset >= warningThreshold;
+            const forecast = _windowForecast(raw, measurementState, nowMs);
+            const certainlyExhausts = percent >= 100 || forecast.willExhaust === true && forecast.forecastConfidence === 'high';
+            const nearExhaustion = forecast.willExhaust === true || percent >= warningThreshold;
 
             windows.push({
                 key: _windowKey(raw, index),
@@ -141,11 +178,7 @@ var UsageModel = (() => {
                 percent,
                 observedAt: raw?.observedAt || null,
                 resetsAt: raw?.resetsAt || null,
-                projectedAtReset,
-                exhaustsAt: prediction?.exhaustsAt || null,
-                willExhaust,
-                forecastConfidence: prediction ? lowConfidence ? 'low' : 'high' : 'unknown',
-                predictionState: prediction?.state || null,
+                ...forecast,
                 severity: certainlyExhausts ? 'critical' : nearExhaustion ? 'warning' : 'normal',
                 stale: measurementState === 'stale',
                 scoped,
@@ -561,6 +594,7 @@ var UsageModel = (() => {
                 basisLabel: basis === 'exact' ? 'Exact threshold' :
                     basis === 'bound' ? 'Conservative bound' : 'Unknown basis',
                 eligibleAccounts, unreadableAccounts, unopenedAccounts, otherExcludedAccounts, spentAccounts, learningAccounts,
+                paceProbe: payload?.paceProbe || null,
                 unopenedText,
                 incomplete: unreadableAccounts > 0,
                 depthText: depth.join(' · '),
@@ -583,8 +617,10 @@ var UsageModel = (() => {
         if (signal?.stale || signal?.expired)
             return 'Stale';
         switch (signal?.valueText) {
-        case 'Learning': return '…';
-        case 'Limited evidence':
+        case 'Learning': return 'Learn';
+        case 'Limited evidence': return signal.learningAccounts > 0 &&
+            signal.learningAccounts === signal.unreadableAccounts && signal.projectionBasis === 'measured' &&
+            ['learning_accounts', 'beyond_probe_range', null].includes(signal.headroomAbsence) ? 'Learn' : '?';
         case 'Unknown':
         case 'Unavailable': return '?';
         case 'No accounts': return 'None';
@@ -593,6 +629,29 @@ var UsageModel = (() => {
         case 'Out': return 'Out';
         default: return signal?.percent != null ? signal.valueText : '?';
         }
+    }
+
+    function workloadTooltipLine(row) {
+        const parts = [`${row.label}: ${row.valueText}`];
+        if (row.stale || row.expired)
+            return parts[0];
+        if (row.unreadableAccounts > 0 || row.learningAccounts > 0) {
+            parts.push(`${Math.max(0, row.eligibleAccounts - row.unreadableAccounts)}/${row.eligibleAccounts} modeled`);
+            if (row.learningAccounts > 0)
+                parts.push(`${row.learningAccounts} learning`);
+        }
+        if (row.headroomAbsence === 'beyond_probe_range') {
+            const reduction = row.outcomeKind === 'runway';
+            const limit = row.paceProbe?.[reduction ? 'maximumReductionPct' : 'maximumIncreasePct'];
+            if (['runway', 'beyond_horizon'].includes(row.outcomeKind) &&
+                typeof limit === 'number' && Number.isFinite(limit) && limit > 0 && (!reduction || limit <= 100))
+                parts.push(reduction ? `modeled out even at −${limit}% rate` : `no failure at tested +${limit}% rate`);
+            else
+                parts.push('outside tested pace range');
+        }
+        if (row.basis === 'bound' && row.headroomAbsence === 'beyond_probe_range')
+            parts.push('family bound');
+        return parts.join(' · ');
     }
 
     function _accountName(accountId, accounts) {
@@ -813,7 +872,8 @@ var UsageModel = (() => {
                 windows: accountWindows(
                     account,
                     options.showScoped !== false,
-                    warningThreshold
+                    warningThreshold,
+                    nowMs
                 ),
                 stale: account.measurementState === 'stale',
             };
@@ -937,6 +997,7 @@ var UsageModel = (() => {
         measurementNotice,
         normalizeBaseUrl,
         panelWorkloadLabel,
+        workloadTooltipLine,
         paceView,
         pacingView,
         providerOverloads,

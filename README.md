@@ -20,12 +20,18 @@ The F monogram identifies Fable and is not an official brand mark.
 
 When no percentage is available, the panel uses short indicators: `Risk` for
 projected exhaustion, `Holds` for reaching the next reset, `?` for unknown or
-limited evidence, `…` for learning, `None` for no accounts, and `Out` for exhausted
-quota. Stale or expired forecasts show `Stale`. Hover for the full state names.
+limited evidence, `Learn` when learning explains missing coverage, `None` for no
+accounts, and `Out` for exhausted quota. Stale or expired forecasts show `Stale`.
+Hover for full states, modeled coverage and the tested pace range when relevant.
+`Learn` describes coverage still learning; a pace percentage may remain unavailable afterward.
 
 Click the applet for the account utilization bars, availability and reset times,
-plus refresh and dashboard shortcuts. Forecast explanations and long-term advice
-are not displayed in the popup.
+plus refresh and dashboard shortcuts. Each bar shows a compact window forecast:
+`out ~2h`, `learning`, or `—`. Exhaustion is flagged only before a known reset.
+These estimates use `windows[].forecast`; missing forecasts on older servers
+remain unavailable even when a regression `prediction` exists. Learning does
+not end just because `readyAt` passes. Low-confidence estimates use warning
+color and are qualified in the accessible description.
 
 Only server states `increase` and `reduce` permit numeric advice. A raw percentage
 can coexist with `uncertain`; the applet suppresses that number. Missing or legacy

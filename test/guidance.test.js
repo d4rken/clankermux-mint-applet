@@ -83,7 +83,7 @@ test('every nonnumeric state remains explicit on the panel even if raw numbers e
         response.rows[0].nextReset.guidanceState = guidanceState;
         const row = model.workloadHeadroomView(response, fixtures.NOW).rows[0];
         assert.equal(row.valueText, label);
-        assert.equal(model.panelWorkloadLabel(row), guidanceState === 'learning' ? '…' : guidanceState === 'no_accounts' ? 'None' : '?');
+        assert.equal(model.panelWorkloadLabel(row), guidanceState === 'learning' ? 'Learn' : guidanceState === 'no_accounts' ? 'None' : '?');
         assert.equal(row.percent, null);
     }
 });

@@ -35,7 +35,7 @@ test('does not turn missing utilization into zero usage', () => {
     assert.equal(model.clampPercent(0), 0);
 });
 
-test('extracts public-v1 windows and their server predictions', () => {
+test('retains utilization on older servers without window forecasts', () => {
     const windows = model.accountWindows(fixtures.accounts()[0]);
 
     assert.deepEqual(windows.map(window => [window.key, window.label, window.percent]), [
@@ -43,8 +43,8 @@ test('extracts public-v1 windows and their server predictions', () => {
         ['seven_day', 'Weekly', 60],
         ['scope:fable', 'Fable', 40],
     ]);
-    assert.equal(windows[0].projectedAtReset, 95);
-    assert.equal(windows[0].forecastConfidence, 'high');
+    assert.equal(windows[0].forecastText, '—');
+    assert.equal(windows[0].forecastConfidence, 'unknown');
     assert.equal(windows[0].severity, 'warning');
     assert.equal(windows[2].scoped, true);
 });
@@ -68,7 +68,13 @@ test('hides scoped and otherwise-scoped windows when configured', () => {
 });
 
 test('low-confidence exhaustion is warning rather than critical', () => {
-    const window = model.accountWindows(fixtures.accounts()[1])[0];
+    const account = fixtures.accounts()[1];
+    account.measurementState = 'fresh';
+    account.windows[0].forecast = {
+        state: 'projected', reason: null,
+        exhaustsAt: '2026-08-24T13:45:00.000Z', lowConfidence: true,
+    };
+    const window = model.accountWindows(account, true, 80, NOW)[0];
     assert.equal(window.willExhaust, true);
     assert.equal(window.forecastConfidence, 'low');
     assert.equal(window.severity, 'warning');

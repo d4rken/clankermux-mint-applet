@@ -106,9 +106,13 @@
 }
 
 .clankermux-forecast {
-    width: 48px;
+    width: 100px;
     color: #8bd49c;
     font-size: 0.85em;
+}
+
+.clankermux-forecast.unknown {
+    color: #a8a8a8;
 }
 
 .clankermux-forecast.warning {

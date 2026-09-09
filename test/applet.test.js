@@ -70,6 +70,25 @@ function appletHarness() {
     };
 }
 
+test('account popup signature follows new window forecasts', () => {
+    const h = appletHarness();
+    const before = h.applet._menuStateSignature();
+    h.applet._accounts[0].windows[1].forecast = {
+        state: 'projected', reason: null,
+        exhaustsAt: new Date(fixtures.NOW + 3600000).toISOString(), lowConfidence: false,
+    };
+    h.applet._render();
+    assert.notEqual(h.applet._menuStateSignature(), before);
+    assert.equal(h.applet._view.accounts.find(a => a.id === 'account-a').windows[1].forecastText, 'out ~1h');
+    const projected = h.applet._menuStateSignature();
+    h.advance(60000);
+    h.applet._render();
+    assert.equal(h.applet._menuStateSignature(), projected);
+    h.applet._accounts[0].windows[1].forecast.exhaustsAt = new Date(fixtures.NOW + 7200000).toISOString();
+    h.applet._render();
+    assert.notEqual(h.applet._menuStateSignature(), projected);
+});
+
 test('forecast-only refresh updates next-reset bars without touching accounts/status freshness', () => {
     const h = appletHarness();
     const oldAccounts = h.applet._accounts;
