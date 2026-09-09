@@ -1,186 +1,160 @@
 'use strict';
-
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const model = require('../usageModel');
-const fixtures = require('./publicV1Fixtures');
-const examples = name => JSON.parse(fs.readFileSync(path.join(__dirname, 'api-examples', `workload-headroom${name}.json`)));
-const build = (response, pacing = fixtures.pacing(), options = {}, now = fixtures.NOW) =>
-    model.buildView(fixtures.accounts(), fixtures.status(), fixtures.runway(), pacing, response, options, now);
+const f = require('./publicV1Fixtures');
+const view = payload => model.workloadsView(payload, f.NOW);
+const claude = payload => view(payload).find(r => r.key === 'class:anthropic');
 
-const cases = [
-    ['', ['↑ ~25% room'], ['↓ ~20% pace']],
-    ['.partial-coverage', ['Limited evidence'], ['Limited evidence']],
-    ['.learning', ['Learning'], ['Learning']],
-    ['.structural', ['Limited evidence'], ['Limited evidence']],
-    ['.exhausted', ['Out'], ['Out']],
-    ['.probe-limit', ['Reaches reset'], ['May run out']],
-    ['.no-weekly-deadline', ['Unavailable'], ['Unknown']],
-    ['.family-credits', ['Limited evidence'], ['May run out']],
-    ['.family-bound', ['Limited evidence', 'Limited evidence'], ['Limited evidence', 'Limited evidence']],
-    ['.missing-fable', ['↑ ~25% room'], ['↓ ~20% pace']],
-];
-for (const [name, primary, longTerm] of cases) {
-    test(`renders the published ${name || 'opposing-interval'} example`, () => {
-        const response = examples(name);
-        const view = model.workloadHeadroomView(response, Date.parse(response.generatedAt));
-        assert.deepEqual(view.rows.map(row => row.valueText), primary);
-        assert.deepEqual(view.rows.map(row => row.longTerm.valueText), longTerm);
-        for (const row of view.rows) {
-            for (const forecast of [row, row.longTerm]) {
-                if (forecast.valueText === 'Out') assert.equal(forecast.severity, 'critical');
-                if (forecast.valueText === 'May run out') assert.equal(forecast.severity, 'warning');
-            }
+test('server examples render estimates, partial coverage, search limits and family exhaustion', () => {
+    const expected = [ ['workloads', '↓ ~40% pace'], ['workloads.partial', 'Risk'],
+        ['workloads.increase-limit', 'Room'], ['workloads.reduction-limit', 'Risk'] ];
+    for (const [name, text] of expected) assert.equal(claude(f.example(name)).panelText, text);
+    const family = view(f.example('workloads.family')).find(r => r.key === 'family:fable');
+    assert.equal(family.valueText, 'Weekly exhausted');
+    assert.equal(family.parentWorkloadId, 'class:anthropic');
+    assert.equal(family.availability.availableAccounts, 0);
+    assert.match(model.workloadTooltipLine(family), /overlaps Claude/);
+});
+
+test('joins stable IDs, never label or order; missing family is omitted', () => {
+    const payload = f.workloads(); payload.workloads.reverse(); payload.workloads.forEach(w => {w.label = 'wrong';});
+    assert.deepEqual(view(payload).map(r => r.key), ['class:codex','class:anthropic','family:fable']);
+    assert.equal(view(f.example('workloads')).length, 2);
+    assert.equal(model.workloadsView(payload, f.NOW, false, false).length, 2);
+});
+
+test('only estimate state renders signed percentages, including zero and family bound', () => {
+    for (const state of ['unavailable','other','future','increase_limit','reduction_limit']) {
+        const p=f.workloads(); p.workloads[1].weekly.pace.state=state;
+        assert.equal(view(p)[0].percent, null);
+        assert.doesNotMatch(view(p)[0].panelText, /%/);
+    }
+    for (const [changePct,text] of [[25,'↑ ~25% room'],[-20,'↓ ~20% pace'],[0,'~0% pace']]) {
+        const p=f.workloads();p.workloads[1].weekly.pace.changePct=changePct;
+        assert.equal(view(p)[0].panelText,text);
+    }
+    const p=f.workloads();p.workloads[1].weekly.pace.qualification='conservative_bound';
+    assert.equal(view(p)[0].panelText, '↑ ~25% room*');
+});
+
+test('invalid numeric, quality, coverage or qualification withholds adjustment', () => {
+    for (const mutation of [
+        w=>{w.pace.changePct=null;},w=>{w.pace.changePct='25';},w=>{w.pace.changePct=Infinity;},
+        w=>{w.pace.qualification='future';},w=>{w.quality='limited';},w=>{w.quality='future';},
+        w=>{w.coverage.modeledAccounts=1;w.coverage.idleAccounts=1;},w=>{delete w.coverage.modeledAccounts;},
+        w=>{w.outcome='future';},w=>{w.pace.reason='future';},
+    ]) {const p=f.workloads();mutation(p.workloads[1].weekly);assert.equal(view(p)[0].percent,null);}
+});
+
+test('five-hour learning does not participate in weekly evidence or pace', () => {
+    const accounts=f.example('accounts.partial-learning').accounts;
+    const result=model.buildView(accounts,f.status(),f.workloads(),{},f.NOW);
+    assert.equal(result.accounts[0].windows[0].forecastText,'no usage');
+    assert.equal(result.paceRows[1].percent,-40);
+});
+
+test('coverage categories are disjoint and partial exhaustion is qualified', () => {
+    const p=f.example('workloads.partial'); const row=claude(p);
+    assert.match(model.forecastSummary(row,f.NOW), /Subset risk.*1\/2 modeled · 1 idle/);
+    assert.equal(row.percent,null);
+    p.workloads[0].weekly.outcome='exhausted';
+    assert.equal(claude(p).valueText,'Subset exhausted');
+    p.workloads[0].weekly.coverage.learningAccounts=1;
+    assert.equal(claude(p).valueText,'Unavailable');
+});
+
+test('weekly freshness uses computedAt AND evidence, availability has its own clock', () => {
+    for (const field of ['computedAt','evidenceObservedAt']) {
+        for (const time of [null,new Date(f.NOW-180000).toISOString()]) {
+            const p=f.workloads();p.generatedAt=f.NOW_ISO;p.workloads[1].weekly[field]=time;
+            const r=view(p)[0];assert.equal(r.panelText,'Stale');assert.equal(r.percent,null);
+            assert.equal(r.availability.availableAccounts,1);
         }
-        for (const row of view.rows) {
-            for (const forecast of [row, row.longTerm]) {
-                if (!['increase', 'reduce'].includes(forecast.guidanceState)) {
-                    assert.equal(forecast.percent, null);
-                    assert.doesNotMatch(forecast.valueText, /%|plenty|cut hard/i);
-                }
-            }
-        }
-    });
-}
-
-test('headlines use stable workload keys and never borrow burn-ratio advice', () => {
-    const response = fixtures.nextResetWorkloads();
-    response.rows.reverse();
-    response.rows.forEach(row => { row.label = 'Duplicate'; row.futureField = true; });
-    response.rows.find(row => row.dimensionId === 'fable').unopenedAccounts = 1;
-    const pacing = fixtures.pacing();
-    pacing.classes.forEach(row => { row.burnRatio = 99; });
-    const view = build(response, pacing);
-    assert.deepEqual(view.paceRows.map(row => [row.key, row.label, row.valueText]), [
-        ['class:codex', 'GPT', '↑ ~25% room'],
-        ['class:anthropic', 'Claude', '↑ ~25% room'],
-        ['family:fable', 'Fable', 'Limited evidence'],
-    ]);
-    assert.match(view.paceRows[2].detail, /has not used Fable this week/);
-    assert.doesNotMatch(view.paceRows[2].detail, /Duplicate/);
-    assert.deepEqual(build(response, null).paceRows, view.paceRows);
-    assert.equal(build(null, pacing).paceRows.every(row => row.valueText === 'Unknown'), true);
-    assert.equal(build(response, pacing, { workloadHeadroomFetchFailed: true }).paceRows.every(row => row.valueText === 'Stale'), true);
+    }
+    const p=f.workloads();p.workloads[1].availability.computedAt=new Date(f.NOW-180000).toISOString();
+    assert.equal(view(p)[0].availability.text,'stale');assert.equal(view(p)[0].percent,25);
 });
 
-test('an absent family stays Unknown unless family display is disabled', () => {
-    const response = examples('.missing-fable');
-    const now = Date.parse(response.generatedAt);
-    const row = build(response, null, {}, now).paceRows.find(row => row.key === 'family:fable');
-    assert.equal(row.valueText, 'Unknown');
-    assert.match(row.detail, /Forecast unavailable/);
-    assert.equal(build(response, null, { showScoped: false }, now).paceRows.length, 2);
+test('expired/missing/unknown periods withhold advice and never imply recovery', () => {
+    for (const period of [null,{}, {startsAt:f.NOW_ISO,endsAt:'bad',endReason:'next_weekly_reset'},
+        {startsAt:new Date(f.NOW-60000).toISOString(),endsAt:f.NOW_ISO,endReason:'next_weekly_reset'},
+        {startsAt:f.NOW_ISO,endsAt:new Date(f.NOW+60000).toISOString(),endReason:'future'}]) {
+        const p=f.workloads();p.workloads[1].weekly.period=period;assert.equal(view(p)[0].percent,null);
+    }
+    const p=f.workloads();p.workloads[1].weekly.period.endsAt=f.NOW_ISO;
+    assert.equal(view(p)[0].valueText,'Expired');assert.equal(view(p)[0].availability.availableAccounts,1);
 });
 
-test('every nonnumeric state remains explicit on the panel even if raw numbers exist', () => {
-    for (const [guidanceState, label] of [
-        ['learning', 'Learning'], ['uncertain', 'Limited evidence'], ['unknown', 'Unknown'],
-        ['no_accounts', 'No accounts'], ['other', 'Unknown'], ['future-state', 'Unknown'], [null, 'Unknown'],
-    ]) {
-        const response = fixtures.nextResetWorkloads();
-        response.rows[0].nextReset.guidanceState = guidanceState;
-        const row = model.workloadHeadroomView(response, fixtures.NOW).rows[0];
-        assert.equal(row.valueText, label);
-        assert.equal(model.panelWorkloadLabel(row), guidanceState === 'learning' ? 'Learn' : guidanceState === 'no_accounts' ? 'None' : '?');
-        assert.equal(row.percent, null);
+test('availability handles missing/unknown and paid fallback independently from exhausted weekly quota', () => {
+    const p=f.workloads();const raw=p.workloads[1];raw.weekly.outcome='exhausted';raw.weekly.pace.state='unavailable';
+    assert.equal(view(p)[0].panelText,'Out');assert.equal(view(p)[0].availability.text,'1');
+    raw.availability.unknownAccounts=2;assert.equal(view(p)[0].availability.text,'1 + ?');
+    delete raw.availability.availableAccounts;assert.equal(view(p)[0].availability.text,'unavailable');
+    assert.equal(view(p)[0].panelText,'Out');
+});
+
+test('fetch failure invalidates cached advice without zeroing either capacity', () => {
+    const rows=model.workloadsView(f.workloads(),f.NOW,true);
+    assert.equal(rows[0].panelText,'Stale');assert.equal(rows[0].availability.text,'stale');
+    assert.equal(rows[0].availability.availableAccounts,undefined);
+});
+
+test('no accounts and no subscription quota remain distinct without a deadline', () => {
+    for(const [outcome,text] of [['no_accounts','No active accounts'],['not_applicable','No weekly quota']]) {
+        const p=f.workloads();const w=p.workloads[1].weekly;w.outcome=outcome;w.period=null;
+        w.coverage={eligibleAccounts:0,modeledAccounts:0,idleAccounts:0,learningAccounts:0,unavailableAccounts:0};w.evidenceObservedAt=null;
+        assert.equal(view(p)[0].valueText,text);assert.equal(view(p)[0].percent,null);
     }
 });
 
-test('valid family percentages retain their bound marker and overlap explanation', () => {
-    for (const [guidanceState, outcomeKind, headroomDirection, label] of [
-        ['increase', 'beyond_horizon', 'margin', '↑ ~25% room*'],
-        ['reduce', 'runway', 'deficit', '↓ ~25% pace*'],
-    ]) {
-        const response = fixtures.nextResetWorkloads();
-        const family = response.rows[2];
-        family.unreadableAccounts = 0;
-        Object.assign(family.nextReset, { guidanceState, outcomeKind, headroomDirection, projectionBasis: 'measured' });
-        const row = build(response).paceRows[2];
-        assert.equal(row.valueText, label);
-        assert.match(row.detail, /conservative bound/);
-        assert.match(row.detail, /overlaps Claude/);
-    }
+
+test('search-limit states never overwrite a contradictory weekly outcome', () => {
+    const p = f.workloads();
+    const w = p.workloads[1].weekly;
+    w.pace.state = 'reduction_limit';
+    assert.equal(view(p)[0].valueText, 'Reaches reset');
+    assert.equal(view(p)[0].panelText, 'Holds');
+    w.outcome = 'exhausts_before_end';
+    w.exhaustsAt = new Date(f.NOW + 3600000).toISOString();
+    w.pace.state = 'increase_limit';
+    assert.equal(view(p)[0].valueText, 'Weekly risk');
+    assert.equal(view(p)[0].panelText, 'Risk');
+    assert.doesNotMatch(model.workloadTooltipLine(view(p)[0]), /Tested/);
+    w.pace.state = 'reduction_limit';
+    assert.match(model.workloadTooltipLine(view(p)[0]), /Tested cut insufficient/);
 });
 
-test('unknown intervals, malformed directions and weak evidence cannot produce numeric advice', () => {
-    const invalid = [
-        { intervalKind: 'future-interval' }, { intervalKind: null },
-        { guidanceState: 'reduce' }, { outcomeKind: 'unknown' },
-        { projectionBasis: 'structural' }, { projectionBasis: null },
-        { headroomDirection: 'other' }, { headroomDirection: null },
-        ...[null, '25', true, -1, 0, NaN, Infinity].map(headroomPct => ({ headroomPct })),
-    ];
-    for (const fields of invalid) {
-        const response = fixtures.nextResetWorkloads();
-        Object.assign(response.rows[0].nextReset, fields);
-        const row = model.workloadHeadroomView(response, fixtures.NOW).rows[0];
-        assert.equal(row.percent, null, JSON.stringify(fields));
-        assert.equal(row.valueText, 'Unknown');
-    }
-    for (const headroomBasis of [null, 'other', 'future']) {
-        const response = fixtures.nextResetWorkloads();
-        response.rows[0].headroomBasis = headroomBasis;
-        assert.equal(model.workloadHeadroomView(response, fixtures.NOW).rows[0].percent, null);
-    }
+test('limited weekly evidence is qualified in the summary without adding panel text', () => {
+    const p = f.workloads();
+    p.workloads[1].weekly.quality = 'limited';
+    const row = view(p)[0];
+    assert.equal(row.percent, null);
+    assert.equal(row.panelText, 'Holds');
+    assert.match(model.forecastSummary(row, f.NOW), /Reaches reset · limited · 2\/2 modeled/);
+    const stale = model.workloadsView(p, f.NOW + 180000)[0];
+    assert.doesNotMatch(model.forecastSummary(stale, f.NOW + 180000), /limited/);
 });
 
-test('legacy servers retain raw context without advisory percentages', () => {
-    const response = fixtures.nextResetWorkloads();
-    delete response.intervalKind;
-    for (const row of response.rows) {
-        delete row.guidanceState;
-        delete row.nextReset.guidanceState;
-        delete row.nextReset.intervalKind;
+test('resource clocks are independent and stale evidence survives a new envelope', () => {
+    for (const skew of [-90000, 90000]) {
+        const opts = { accountsGeneratedAt: f.NOW_ISO, accountsReceivedAt: f.NOW + skew,
+            workloadsGeneratedAt: f.NOW_ISO, workloadsReceivedAt: f.NOW + skew };
+        let result = model.buildView(f.accounts(), f.status(), f.workloads(), opts, f.NOW + skew);
+        assert.equal(result.nowMs, f.NOW);
+        assert.equal(result.paceRows[0].percent, 25);
+        assert.equal(result.accounts[0].windows[1].forecastQuality, 'supported');
+        opts.workloadsGeneratedAt = new Date(f.NOW + 180000).toISOString();
+        result = model.buildView(f.accounts(), f.status(), f.workloads(), opts, f.NOW + skew);
+        assert.equal(result.nowMs, f.NOW);
+        assert.equal(result.workloadsNowMs, f.NOW + 180000);
+        assert.equal(result.paceRows[0].panelText, 'Stale');
+        assert.equal(result.providerUsageRows[0].stale, false);
+        const p = f.workloads();
+        p.workloads[1].weekly.period.endsAt = new Date(f.NOW + 1000).toISOString();
+        opts.workloadsGeneratedAt = f.NOW_ISO;
+        result = model.buildView(f.accounts(), f.status(), p, opts, f.NOW + skew + 2000);
+        assert.equal(result.paceRows[0].valueText, 'Expired');
+        assert.equal(result.paceRows[0].availability.text, '1');
     }
-    const view = build(response);
-    for (const row of view.paceRows) {
-        assert.equal(row.valueText, 'Unknown');
-        assert.equal(row.percent, null);
-        assert.equal(row.longTerm.percent, null);
-        assert.match(row.summary, /Raw forecast \(legacy server\)/);
-    }
-});
-
-test('absence reasons belong to their own interval and do not override guidance state', () => {
-    const response = fixtures.nextResetWorkloads();
-    const raw = response.rows[0];
-    Object.assign(raw, { guidanceState: 'unquantified', headroomPct: null, headroomAbsence: 'bound_broken_by_credits' });
-    Object.assign(raw.nextReset, { guidanceState: 'uncertain', headroomPct: null, headroomAbsence: 'learning_accounts' });
-    const row = model.workloadHeadroomView(response, fixtures.NOW).rows[0];
-    assert.equal(row.valueText, 'Limited evidence');
-    assert.match(row.summary, /learning their burn/);
-    assert.doesNotMatch(row.summary, /credits/);
-    assert.match(row.longTerm.summary, /credits/);
-    assert.doesNotMatch(row.longTerm.summary, /learning their burn/);
-});
-
-test('weak forecasts label exhaustion times as raw estimates in both intervals', () => {
-    const response = examples('.family-bound');
-    const row = model.workloadHeadroomView(response, Date.parse(response.generatedAt)).rows[1];
-    for (const forecast of [row, row.longTerm]) {
-        assert.match(forecast.summary, /Unverified exhaustion estimate:/);
-        assert.doesNotMatch(forecast.summary, /Projected exhaustion:/);
-    }
-    const partial = examples('.partial-coverage');
-    const incomplete = model.workloadHeadroomView(partial, Date.parse(partial.generatedAt)).rows[0];
-    assert.match(incomplete.longTerm.summary, /Unverified exhaustion estimate/);
-    const measured = examples('.probe-limit');
-    const unquantified = model.workloadHeadroomView(measured, Date.parse(measured.generatedAt)).rows[0];
-    assert.match(unquantified.longTerm.summary, /Projected exhaustion:/);
-});
-
-
-test('rejected numeric advice does not lend confidence to a raw exhaustion time', () => {
-    const response = fixtures.nextResetWorkloads();
-    const raw = response.rows[1];
-    raw.headroomPct = null;
-    const rejected = model.workloadHeadroomView(response, fixtures.NOW).rows[1].longTerm;
-    assert.equal(rejected.valueText, 'Unknown');
-    assert.match(rejected.summary, /Unverified exhaustion estimate:/);
-    delete raw.guidanceState;
-    const legacy = model.workloadHeadroomView(response, fixtures.NOW).rows[1].longTerm;
-    assert.match(legacy.summary, /Unverified exhaustion estimate:/);
-    assert.match(legacy.summary, /Raw forecast \(legacy server\)/);
 });

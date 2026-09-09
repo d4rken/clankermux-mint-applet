@@ -3,8 +3,8 @@
   "generatedAt": "2026-09-09T12:00:00.000Z",
   "accounts": [
     {
-      "id": "acc_learning_example",
-      "name": "Claude Idle Session",
+      "id": "acc_example",
+      "name": "Claude Primary",
       "provider": "anthropic",
       "availability": {
         "state": "available",
@@ -22,13 +22,13 @@
           "kind": "five_hour",
           "scopeId": null,
           "label": null,
-          "utilizationPct": 0,
+          "utilizationPct": 35,
           "observedAt": "2026-09-09T11:59:30.000Z",
           "resetsAt": "2026-09-09T15:00:00.000Z",
           "forecast": {
-            "outcome": "unknown",
-            "quality": "unavailable",
-            "reason": "no_usage",
+            "outcome": "lasts_until_reset",
+            "quality": "supported",
+            "reason": null,
             "exhaustsAt": null,
             "reassessAt": null
           }
@@ -37,14 +37,14 @@
           "kind": "seven_day",
           "scopeId": null,
           "label": null,
-          "utilizationPct": 60,
+          "utilizationPct": 62,
           "observedAt": "2026-09-09T11:59:30.000Z",
-          "resetsAt": "2026-09-14T12:00:00.000Z",
+          "resetsAt": "2026-09-10T12:00:00.000Z",
           "forecast": {
-            "outcome": "exhausts_before_reset",
+            "outcome": "lasts_until_reset",
             "quality": "supported",
             "reason": null,
-            "exhaustsAt": "2026-09-10T19:59:10.000Z",
+            "exhaustsAt": null,
             "reassessAt": null
           }
         }

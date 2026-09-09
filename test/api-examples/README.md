@@ -1,3 +1,1 @@
-Invented public API examples copied from clankermux/docs/public-api/examples on 2026-09-09. These pin the additive v1 guidance contract independently of the widget implementation. They are not production account snapshots.
-
-accounts.partial-learning.json pins the per-window forecast additions in 2026.9.34.
+Invented examples copied unchanged from clankermux/docs/public-api/examples for API release 2026.9.36 on 2026-09-09. These pin the replacement public contract; they are not production account snapshots.

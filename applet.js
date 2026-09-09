@@ -102,7 +102,7 @@ function createPanelWorkload(row, iconDirectory) {
 function updatePanelWorkload(meter, row, displayValue) {
     meter._clankermuxValue.set_text(displayValue);
     meter._clankermuxValue.set_style_class_name(`clankermux-panel-pace-value ${row.severity}`);
-    meter.set_accessible_name(`${row.label}: ${row.valueText}`);
+    meter.set_accessible_name(`${row.label}: ${displayValue}`);
 }
 
 class ForecastSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
@@ -111,14 +111,19 @@ class ForecastSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
         this._model = model;
         this._lines = new Map();
         const box = new St.BoxLayout({ vertical: true, style_class: 'clankermux-summary' });
-        box.add_child(new St.Label({ text: 'Forecast until next weekly reset ↗', style_class: 'clankermux-info-title' }));
+        const heading = new St.BoxLayout();
+        heading.add_child(new St.Label({ text: 'Weekly until next reset ↗', style_class: 'clankermux-info-title', x_expand: true }));
+        heading.add_child(new St.Label({ text: 'Available now', style_class: 'clankermux-info-subtitle' }));
+        box.add_child(heading);
         for (const row of rows) {
             const line = new St.BoxLayout({ style_class: 'clankermux-summary-line' });
             line.add_child(createWorkloadIcon(row, iconDirectory));
             const label = new St.Label({ style_class: 'clankermux-info-subtitle' });
             line.add_child(label);
+            const available = new St.Label({ style_class: 'clankermux-summary-availability', x_expand: true, x_align: Clutter.ActorAlign.END });
+            line.add_child(available);
             box.add_child(line);
-            this._lines.set(row.key, { line, label });
+            this._lines.set(row.key, { line, label, available });
         }
         this.addActor(box, { expand: true });
         this.update(rows, nowMs);
@@ -130,11 +135,15 @@ class ForecastSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
             item.line.visible = keys.has(key);
         for (const row of rows) {
             const item = this._lines.get(row.key);
-            if (item)
+            if (item) {
                 item.label.set_text(this._model.forecastSummary(row, nowMs));
+                item.available.set_text(row.availability.text);
+                item.available.set_accessible_name(row.availability.detail);
+            }
         }
         this.actor.set_accessible_name('Open dashboard. Forecast until next weekly reset. ' +
-            rows.filter(row => this._lines.has(row.key)).map(row => this._model.forecastSummary(row, nowMs)).join('. '));
+            rows.filter(row => this._lines.has(row.key)).map(row =>
+                `${this._model.forecastSummary(row, nowMs)}. ${row.availability.detail}`).join('. '));
     }
 }
 
@@ -149,13 +158,6 @@ class AccountMenuItem extends PopupMenu.PopupBaseMenuItem {
             style_class: 'clankermux-account-name',
             y_align: Clutter.ActorAlign.CENTER,
         }));
-        if (account.defaultCandidate) {
-            heading.add_child(new St.Label({
-                text: 'DEFAULT',
-                style_class: 'clankermux-primary-badge',
-                y_align: Clutter.ActorAlign.CENTER,
-            }));
-        }
         heading.add_child(new St.Label({
             text: account.provider,
             style_class: 'clankermux-provider',
@@ -211,17 +213,10 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._refreshing = false;
         this._accounts = null;
         this._status = null;
-        this._runway = null;
-        this._pacing = null;
-        this._workloadHeadroom = null;
-        this._statusReceivedAt = 0;
-        this._runwayReceivedAt = 0;
-        this._pacingReceivedAt = 0;
-        this._workloadHeadroomReceivedAt = 0;
+        this._workloads = null;
+        this._resourceClocks = {};
+        this._lastWorkloadsError = '';
         this._outlookSchedule = polling.createOutlookSchedule();
-        this._lastRunwayError = '';
-        this._lastPacingError = '';
-        this._lastWorkloadHeadroomError = '';
         this._view = null;
         this._lastSuccess = 0;
         this._lastError = '';
@@ -292,7 +287,6 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this.settings.bind('request-timeout', 'requestTimeout', this._onConnectionSettingsChanged.bind(this));
         this.settings.bind('panel-display', 'panelDisplay', this._render.bind(this));
         this.settings.bind('show-scoped-limits', 'showScopedLimits', this._render.bind(this));
-        this.settings.bind('default-candidate-first', 'defaultCandidateFirst', this._render.bind(this));
 
         this._createSession();
         this._schedulePolling();
@@ -325,17 +319,10 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._refreshing = false;
         this._accounts = null;
         this._status = null;
-        this._runway = null;
-        this._pacing = null;
-        this._workloadHeadroom = null;
-        this._statusReceivedAt = 0;
-        this._runwayReceivedAt = 0;
-        this._pacingReceivedAt = 0;
-        this._workloadHeadroomReceivedAt = 0;
+        this._workloads = null;
+        this._resourceClocks = {};
+        this._lastWorkloadsError = '';
         this._outlookSchedule = this._pollingModule.createOutlookSchedule();
-        this._lastRunwayError = '';
-        this._lastPacingError = '';
-        this._lastWorkloadHeadroomError = '';
         this._lastSuccess = 0;
         this._lastError = '';
         this._lastAccountsError = '';
@@ -426,196 +413,91 @@ class ClankermuxUsageApplet extends Applet.Applet {
     _refresh(forceOutlook = false, outlookOnly = false) {
         if (this._refreshing || this._destroyed)
             return;
-        const expiredKey = [
-            ...(this._view?.workloads || []).filter(row => row.expired)
-                .map(row => `${row.key}:${row.resetsAt}`),
-            ...(this._view?.pacing?.classes || []).filter(item => item.expired)
-                .map(item => `class:${item.classId}:${item.resetsAt}`),
-        ].sort().join('|');
-        const fetchOutlook = this._outlookSchedule.begin(Date.now(), forceOutlook, expiredKey);
-        if (outlookOnly && !fetchOutlook)
+        const expiredKey = (this._view?.paceRows || []).filter(row => row.expired)
+            .map(row => `${row.key}:${row.resetsAt}`).sort().join('|');
+        const fetchWorkloads = this._outlookSchedule.begin(Date.now(), forceOutlook, expiredKey);
+        if (outlookOnly && !fetchWorkloads)
             return;
+        const resources = [];
+        if (!outlookOnly) {
+            resources.push({ name: 'accounts', valid: data => Array.isArray(data.accounts),
+                apply: data => { this._accounts = data.accounts; } });
+            resources.push({ name: 'status', valid: data => typeof data.serviceState === 'string' && Boolean(data.accounts),
+                apply: data => { this._status = data; } });
+        }
+        if (fetchWorkloads)
+            resources.push({ name: 'workloads', valid: data => Array.isArray(data.workloads),
+                apply: data => { this._workloads = data; } });
         this._refreshing = true;
         const generation = ++this._requestGeneration;
-        const cycle = this._model.createRefreshCycle((outlookOnly ? 0 : 2) + (fetchOutlook ? 3 : 0));
+        const cycle = this._model.createRefreshCycle(resources.length);
         const timeoutSeconds = Math.max(2, Number(this.requestTimeout || 8));
         const cancellable = new Gio.Cancellable();
         this._refreshCancellable = cancellable;
-        let accountsResult = null;
-        let statusResult = null;
-        let runwayResult = null;
-        let pacingResult = null;
-        let workloadHeadroomResult = null;
-        let accountsError = null;
-        let statusError = null;
-        let runwayError = null;
-        let pacingError = null;
-        let workloadHeadroomError = null;
-        let statusReceivedAt = 0;
-        let runwayReceivedAt = 0;
-        let pacingReceivedAt = 0;
-        let workloadHeadroomReceivedAt = 0;
-
-        const validate = (data, schema, label, shape) => {
-            if (!data || typeof data !== 'object')
-                return new Error(`Unexpected ${label} response`);
-            if (data.schema !== schema)
-                return new Error(`Unsupported ${label} schema: ${data.schema || 'missing'}`);
-            if (!shape(data))
-                return new Error(`Unexpected ${label} response`);
-            return null;
-        };
-
-        const complete = () => {
+        const finish = () => {
             if (!cycle.completeOne() || this._destroyed || generation !== this._requestGeneration)
                 return;
             if (this._refreshWatchdogId) {
                 Mainloop.source_remove(this._refreshWatchdogId);
                 this._refreshWatchdogId = 0;
             }
-            this._refreshCancellable = null;
             this._refreshing = false;
-
+            this._refreshCancellable = null;
+            for (const resource of resources) {
+                if (!resource.error) {
+                    resource.apply(resource.data);
+                    const previous = this._resourceClocks?.[resource.name];
+                    const generatedAt = this._model.timestampMs(resource.data.generatedAt);
+                    if (!previous || generatedAt === null || generatedAt > previous.generatedAt) {
+                        if (!this._resourceClocks) this._resourceClocks = {};
+                        this._resourceClocks[resource.name] = { generatedAt, receivedAt: resource.receivedAt };
+                    }
+                }
+                if (resource.name === 'accounts')
+                    this._lastAccountsError = resource.error || '';
+                if (resource.name === 'workloads') {
+                    this._lastWorkloadsError = resource.error || '';
+                    this._outlookSchedule.complete(Date.now(), Boolean(resource.error));
+                }
+            }
             if (!outlookOnly) {
-                accountsError = accountsError || validate(
-                    accountsResult,
-                    'clankermux.public.accounts.v1',
-                    'accounts',
-                    data => Array.isArray(data.accounts)
-                );
-                statusError = statusError || validate(
-                    statusResult,
-                    'clankermux.public.status.v1',
-                    'status',
-                    data => Boolean(data.pool)
-                );
-            }
-            if (fetchOutlook) {
-                runwayError = runwayError || validate(
-                    runwayResult,
-                    'clankermux.public.runway.v1',
-                    'runway',
-                    data => Boolean(data.coverage) && Boolean(data.worstStatedOutcome) &&
-                        Object.prototype.hasOwnProperty.call(data.worstStatedOutcome, 'headroomPct') &&
-                        Object.prototype.hasOwnProperty.call(data.worstStatedOutcome, 'headroomDirection')
-                );
-                pacingError = pacingError || validate(
-                    pacingResult,
-                    'clankermux.public.pacing.v1',
-                    'pacing',
-                    data => Array.isArray(data.classes)
-                );
-                workloadHeadroomError = workloadHeadroomError || validate(
-                    workloadHeadroomResult,
-                    'clankermux.public.workload-headroom.v1',
-                    'workload headroom',
-                    data => Array.isArray(data.rows)
-                );
-            }
-
-            if (!outlookOnly) {
-                this._lastAccountsError = accountsError ? this._errorMessage(accountsError) : '';
-                if (!accountsError)
-                    this._accounts = accountsResult.accounts;
-            }
-            if (!outlookOnly && !statusError) {
-                this._status = statusResult;
-                this._statusReceivedAt = statusReceivedAt || Date.now();
-            }
-            if (fetchOutlook) {
-                if (!runwayError) {
-                    this._runway = runwayResult;
-                    this._runwayReceivedAt = runwayReceivedAt || Date.now();
-                    this._lastRunwayError = '';
-                } else {
-                    this._lastRunwayError = this._errorMessage(runwayError);
-                }
-                if (!pacingError) {
-                    this._pacing = pacingResult;
-                    this._pacingReceivedAt = pacingReceivedAt || Date.now();
-                    this._lastPacingError = '';
-                } else {
-                    this._lastPacingError = this._errorMessage(pacingError);
-                }
-                if (!workloadHeadroomError) {
-                    this._workloadHeadroom = workloadHeadroomResult;
-                    this._workloadHeadroomReceivedAt = workloadHeadroomReceivedAt || Date.now();
-                    this._lastWorkloadHeadroomError = '';
-                } else {
-                    this._lastWorkloadHeadroomError = this._errorMessage(workloadHeadroomError);
-                }
-            }
-
-            if (fetchOutlook)
-                this._outlookSchedule.complete(Date.now(), Boolean(runwayError || pacingError || workloadHeadroomError));
-            if (!outlookOnly && !accountsError && !statusError) {
-                this._lastSuccess = Date.now();
-                this._lastError = '';
-            } else if (!outlookOnly) {
-                const failures = [accountsError, statusError]
-                    .filter(Boolean)
-                    .map(error => this._errorMessage(error));
-                this._lastError = failures.join(' · ');
+                this._lastError = resources.filter(resource => resource.name !== 'workloads')
+                    .map(resource => resource.error).filter(Boolean).join(' · ');
+                if (!this._lastError) this._lastSuccess = Date.now();
             }
             this._render();
         };
-
         this._refreshWatchdogId = Mainloop.timeout_add_seconds(timeoutSeconds, () => {
             this._refreshWatchdogId = 0;
             if (this._destroyed || generation !== this._requestGeneration || !cycle.expire())
                 return false;
-
             this._requestGeneration++;
             this._refreshing = false;
             this._refreshCancellable = null;
             cancellable.cancel();
-            const timeoutError = `Refresh timed out after ${timeoutSeconds}s`;
+            const error = `Refresh timed out after ${timeoutSeconds}s`;
             if (!outlookOnly) {
-                this._lastError = timeoutError;
-                this._lastAccountsError = timeoutError;
+                this._lastError = error;
+                this._lastAccountsError = error;
             }
-            if (fetchOutlook) {
-                this._lastRunwayError = timeoutError;
-                this._lastPacingError = timeoutError;
-                this._lastWorkloadHeadroomError = timeoutError;
+            if (fetchWorkloads) {
+                this._lastWorkloadsError = error;
                 this._outlookSchedule.complete(Date.now(), true);
             }
             this._createSession();
             this._render();
             return false;
         });
-
-        if (!outlookOnly) {
-            this._getJson('/public/v1/accounts', generation, cancellable, (error, data) => {
-                accountsError = error;
-                accountsResult = data;
-                complete();
-            });
-            this._getJson('/public/v1/status', generation, cancellable, (error, data) => {
-                statusError = error;
-                statusResult = data;
-                statusReceivedAt = Date.now();
-                complete();
-            });
-        }
-        if (fetchOutlook) {
-            this._getJson('/public/v1/runway', generation, cancellable, (error, data) => {
-                runwayError = error;
-                runwayResult = data;
-                runwayReceivedAt = Date.now();
-                complete();
-            });
-            this._getJson('/public/v1/pacing', generation, cancellable, (error, data) => {
-                pacingError = error;
-                pacingResult = data;
-                pacingReceivedAt = Date.now();
-                complete();
-            });
-            this._getJson('/public/v1/workload-headroom', generation, cancellable, (error, data) => {
-                workloadHeadroomError = error;
-                workloadHeadroomResult = data;
-                workloadHeadroomReceivedAt = Date.now();
-                complete();
+        for (const resource of resources) {
+            this._getJson(`/public/v1/${resource.name}`, generation, cancellable, (error, data) => {
+                if (this._destroyed || generation !== this._requestGeneration)
+                    return;
+                resource.data = data;
+                resource.receivedAt = Date.now();
+                resource.error = error ? this._errorMessage(error) :
+                    !data || data.schema !== `clankermux.public.${resource.name}.v1` || !resource.valid(data)
+                        ? `Unsupported ${resource.name} response` : null;
+                finish();
             });
         }
     }
@@ -631,28 +513,18 @@ class ClankermuxUsageApplet extends Applet.Applet {
         if (!this._model || !this.menu)
             return;
         this._polling.ensure();
-        this._view = this._model.buildView(
-            this._accounts,
-            this._status,
-            this._runway,
-            this._pacing,
-            this._workloadHeadroom,
-            {
-                showScoped: this.showScopedLimits !== false,
-                defaultCandidateFirst: this.defaultCandidateFirst !== false,
-                statusReceivedAt: this._statusReceivedAt,
-                runwayReceivedAt: this._runwayReceivedAt,
-                pacingReceivedAt: this._pacingReceivedAt,
-                workloadHeadroomReceivedAt: this._workloadHeadroomReceivedAt,
-                runwayFetchFailed: Boolean(this._lastRunwayError),
-                pacingFetchFailed: Boolean(this._lastPacingError),
-                workloadHeadroomFetchFailed: Boolean(this._lastWorkloadHeadroomError),
-                accountsFetchFailed: Boolean(this._lastAccountsError),
-            }
-        );
+        this._view = this._model.buildView(this._accounts, this._status, this._workloads, {
+            showScoped: this.showScopedLimits !== false,
+            accountsGeneratedAt: this._resourceClocks?.accounts?.generatedAt,
+            accountsReceivedAt: this._resourceClocks?.accounts?.receivedAt,
+            workloadsGeneratedAt: this._resourceClocks?.workloads?.generatedAt,
+            workloadsReceivedAt: this._resourceClocks?.workloads?.receivedAt,
+            workloadsFetchFailed: Boolean(this._lastWorkloadsError),
+            accountsFetchFailed: Boolean(this._lastAccountsError),
+        });
         this._renderPanel();
         if (this.menu.isOpen)
-            this._forecastSummaryItem?.update(this._view.paceRows, this._view.nowMs);
+            this._forecastSummaryItem?.update(this._view.paceRows, this._view.workloadsNowMs);
         if (this.menu.isOpen && this._menuStateSignature() !== this._menuSignature)
             this._requestMenuRebuild();
     }
@@ -688,11 +560,11 @@ class ClankermuxUsageApplet extends Applet.Applet {
         const lines = [showForecast ? 'Until next weekly reset' : 'Weekly usage · equal account average'];
         for (const row of rows)
             lines.push(showForecast ? this._model.workloadTooltipLine(row) : row.tooltip);
-        if (showForecast && rows.some(row => row.valueText.includes('*')))
-            lines.push('* Conservative family bound');
+        if (showForecast && rows.some(row => row.panelText.includes('*')))
+            lines.push('* Conservative bound');
         if (!showForecast && rows.some(row => row.valueText.includes('*')))
             lines.push('* Partial or cached readings');
-        if (this._lastError || showForecast && this._lastWorkloadHeadroomError)
+        if (this._lastError || showForecast && this._lastWorkloadsError)
             lines.push('Refresh failed');
         this.set_applet_tooltip(lines.join('\n'));
     }
@@ -703,7 +575,6 @@ class ClankermuxUsageApplet extends Applet.Applet {
             account.id,
             account.name,
             account.provider,
-            account.defaultCandidate,
             account.state.key,
             account.state.label,
             account.state.until || null,
@@ -721,7 +592,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 window.forecastSeverity,
                 window.severity,
                 window.stale,
-                window.forecastConfidence,
+                window.forecastQuality,
             ]),
         ]);
         return JSON.stringify([
@@ -729,8 +600,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
             this._model.normalizeBaseUrl(this.apiUrl),
             view?.pool || null,
             accounts,
-            (view?.paceRows || []).map(row => [row.key, row.valueText, row.exhaustsAt, row.resetsAt,
-                row.eligibleAccounts, row.unreadableAccounts, row.learningAccounts, row.stale, row.expired]),
+            (view?.paceRows || []).map(row => row.key),
             this._lastError || '',
             this._lastSuccess || 0,
             this._refreshing ? 1 : 0,
@@ -763,13 +633,13 @@ class ClankermuxUsageApplet extends Applet.Applet {
             return;
         }
 
-        let subtitle = `${this._view.pool.defaultRoutable} of ${this._view.pool.configured} accounts available`;
+        let subtitle = `${this._view.pool.configured ?? '?'} configured · ${this._view.pool.paused ?? '?'} paused`;
         if (this._lastError)
             subtitle += ' · cached';
         subtitle += ` · ${this._lastRefreshText()}`;
         this.menu.addMenuItem(new InfoMenuItem('Clankermux usage', subtitle));
 
-        const forecastItem = new ForecastSummaryMenuItem(this._view.paceRows, this._model, this._view.nowMs, this._iconDirectory);
+        const forecastItem = new ForecastSummaryMenuItem(this._view.paceRows, this._model, this._view.workloadsNowMs, this._iconDirectory);
         this._forecastSummaryItem = forecastItem;
         forecastItem.connect('activate', () => this._openDashboard());
         this.menu.addMenuItem(forecastItem);

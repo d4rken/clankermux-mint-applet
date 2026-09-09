@@ -43,15 +43,6 @@
     font-size: 0.85em;
 }
 
-.clankermux-primary-badge {
-    color: #8bd49c;
-    font-size: 0.7em;
-    font-weight: bold;
-    border: 1px solid rgba(139, 212, 156, 0.55);
-    border-radius: 3px;
-    padding: 1px 4px;
-}
-
 .clankermux-state.available {
     color: #8bd49c;
 }
@@ -150,4 +141,10 @@
 
 .clankermux-panel-loading {
     color: #a8a8a8;
+}
+
+.clankermux-summary-availability {
+    min-width: 80px;
+    text-align: right;
+    font-size: 0.9em;
 }

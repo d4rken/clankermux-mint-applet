@@ -52,9 +52,8 @@ function appletHarness() {
         _polling: { ensure() {}, stop() {} },
         _outlookSchedule: polling.createOutlookSchedule(),
         _accounts: fixtures.accounts(), _status: fixtures.status(),
-        _runway: fixtures.runway(), _pacing: fixtures.pacing(),
-        _workloadHeadroom: fixtures.nextResetWorkloads(),
-        _lastError: '', _lastRunwayError: '', _lastPacingError: '', _lastWorkloadHeadroomError: '',
+        _workloads: fixtures.workloads(),
+        _lastError: '', _lastWorkloadsError: '',
         _lastAccountsError: '',
         _requestGeneration: 0, _refreshing: false, _destroyed: false,
         requestTimeout: 8,
@@ -82,10 +81,8 @@ function appletHarness() {
             requests.delete(path);
             callback(error, data);
         },
-        replyOutlook(workload = fixtures.nextResetWorkloads()) {
-            this.reply('/public/v1/runway', fixtures.runway());
-            this.reply('/public/v1/pacing', fixtures.pacing());
-            this.reply('/public/v1/workload-headroom', workload);
+        replyOutlook(workload = fixtures.workloads()) {
+            this.reply('/public/v1/workloads', workload);
         },
     };
 }
@@ -115,7 +112,7 @@ test('summary immediately withdraws stale or expired advice without rebuilding h
     for (const expired of [false, true]) {
         const h = appletHarness();
         if (expired) {
-            h.applet._workloadHeadroom.rows[1].nextReset.resetsAt = new Date(fixtures.NOW + 1000).toISOString();
+            h.applet._workloads.workloads[1].weekly.period.endsAt = new Date(fixtures.NOW + 1000).toISOString();
             h.applet._render();
         }
         const summary = h.createSummary();
@@ -126,10 +123,10 @@ test('summary immediately withdraws stale or expired advice without rebuilding h
         h.applet._renderMenu = () => { assert.fail('Hovered account bars must not be rebuilt'); };
         h.advance(expired ? 2000 : 180000);
         h.applet._render();
-        assert.equal(summary._lines.get('class:codex').label.text, `GPT: ${expired ? 'Expired' : 'Stale'}`);
+        assert.match(summary._lines.get('class:codex').label.text, expired ? /^GPT: Expired/ : /^GPT: Stale/);
         assert.match(summary.actor.accessible_name, expired ? /GPT: Expired/ : /GPT: Stale/);
-        assert.equal(h.applet._menuRebuildPending, true);
-    }
+        assert.equal(summary._lines.get('class:codex').available.text, expired ? '1' : 'stale');
+        }
 });
 
 test('status failures do not mark fresh account usage cached, but account failures do', () => {
@@ -163,8 +160,8 @@ test('account popup signature follows new window forecasts', () => {
     const h = appletHarness();
     const before = h.applet._menuStateSignature();
     h.applet._accounts[0].windows[1].forecast = {
-        state: 'projected', reason: null,
-        exhaustsAt: new Date(fixtures.NOW + 3600000).toISOString(), lowConfidence: false,
+        outcome: 'exhausts_before_reset', quality: 'supported', reason: null,
+        exhaustsAt: new Date(fixtures.NOW + 3600000).toISOString(), reassessAt: null,
     };
     h.applet._render();
     assert.notEqual(h.applet._menuStateSignature(), before);
@@ -184,13 +181,12 @@ test('forecast-only refresh updates next-reset bars without touching accounts/st
     h.applet._lastSuccess = fixtures.NOW - 30000;
     h.applet._refresh(false, true);
     assert.deepEqual([...h.requests.keys()], [
-        '/public/v1/runway', '/public/v1/pacing', '/public/v1/workload-headroom',
+        '/public/v1/workloads',
     ]);
     h.replyOutlook();
     assert.equal(h.applet._accounts, oldAccounts);
     assert.equal(h.applet._lastSuccess, fixtures.NOW - 30000);
-    assert.equal(h.applet._view.workloads[1].valueText, '↑ ~25% room');
-    assert.equal(h.applet._view.workloads[1].longTerm.valueText, '↓ ~40% pace');
+    assert.equal(h.applet._view.paceRows[0].panelText, '↑ ~25% room');
     assert.equal(h.applet._refreshing, false);
     assert.equal(h.timers.size, 0);
     h.applet._refresh(false, true);
@@ -199,75 +195,53 @@ test('forecast-only refresh updates next-reset bars without touching accounts/st
 
 test('failed workload fetch preserves the last snapshot but suppresses its advice', () => {
     const h = appletHarness();
-    const oldWorkload = h.applet._workloadHeadroom;
+    const oldWorkload = h.applet._workloads;
     h.applet._refresh(false, true);
-    h.reply('/public/v1/runway', fixtures.runway());
-    h.reply('/public/v1/pacing', fixtures.pacing());
-    h.reply('/public/v1/workload-headroom', null, new Error('offline'));
-    assert.equal(h.applet._workloadHeadroom, oldWorkload);
-    assert.equal(h.applet._view.workloads[1].stale, true);
-    assert.equal(h.applet._view.workloads[1].percent, null);
-    assert.match(h.applet._view.workloads[1].summary, /Last reading: ↑ ~25% room/);
-    assert.equal(h.applet._view.pacing.stale, false);
+    h.reply('/public/v1/workloads', null, new Error('offline'));
+    assert.equal(h.applet._workloads, oldWorkload);
+    assert.equal(h.applet._view.paceRows[1].stale, true);
+    assert.equal(h.applet._view.paceRows[1].percent, null);
     assert.equal(h.applet._lastError, '');
-    h.advance(60000);
+    h.advance(19999);
     h.applet._refresh(false, true);
     assert.equal(h.requests.size, 0);
-    h.advance(60000);
+    h.advance(1);
     h.applet._refresh(false, true);
-    assert.equal(h.requests.size, 3);
+    assert.equal(h.requests.size, 1);
 });
 
 test('refresh watchdog marks cached forecast feeds stale and ignores late replies', () => {
     const h = appletHarness();
-    const oldWorkload = h.applet._workloadHeadroom;
+    const oldWorkload = h.applet._workloads;
     h.applet._refresh(false, true);
     const watchdog = h.timers.get(h.applet._refreshWatchdogId);
     h.advance(8000);
     watchdog();
     assert.equal(h.applet._refreshing, false);
-    assert.equal(h.applet._view.workloads[1].stale, true);
-    assert.equal(h.applet._view.pace.stale, true);
-    assert.equal(h.applet._view.pacing.stale, true);
-    assert.match(h.applet._lastWorkloadHeadroomError, /timed out/);
+    assert.equal(h.applet._view.paceRows[1].stale, true);
+    assert.match(h.applet._lastWorkloadsError, /timed out/);
     h.replyOutlook();
-    assert.equal(h.applet._workloadHeadroom, oldWorkload);
-    assert.equal(h.applet._view.workloads[1].stale, true);
+    assert.equal(h.applet._workloads, oldWorkload);
+    assert.equal(h.applet._view.paceRows[1].stale, true);
 });
 
-test('deadline crossing requests one forecast refresh even inside the usual minute interval', () => {
+test('deadline crossing requests one forecast refresh even inside the usual polling interval', () => {
     const h = appletHarness();
-    const response = fixtures.nextResetWorkloads();
-    response.rows[1].nextReset.resetsAt = new Date(fixtures.NOW + 10000).toISOString();
+    const response = fixtures.workloads();
+    response.workloads[1].weekly.period.endsAt = new Date(fixtures.NOW + 1000).toISOString();
     h.applet._refresh(false, true);
     h.replyOutlook(response);
-    h.advance(10000);
+    h.advance(1000);
     h.applet._render();
-    assert.equal(h.applet._view.workloads[1].expired, true);
+    assert.equal(h.applet._view.paceRows[0].expired, true);
     h.applet._refresh(false, true);
-    assert.equal(h.requests.size, 3);
+    assert.equal(h.requests.size, 1);
     h.replyOutlook(response);
     h.advance(1000);
     h.applet._render();
     h.applet._refresh(false, true);
     assert.equal(h.requests.size, 0);
-    assert.equal(h.applet._view.workloads[1].expired, true);
-});
-
-test('a pacing deadline crossing alone requests one forecast refresh', () => {
-    const h = appletHarness();
-    const pacing = fixtures.pacing();
-    pacing.classes[1].resetsAt = new Date(fixtures.NOW + 10000).toISOString();
-    h.applet._refresh(false, true);
-    h.reply('/public/v1/runway', fixtures.runway());
-    h.reply('/public/v1/pacing', pacing);
-    h.reply('/public/v1/workload-headroom', fixtures.nextResetWorkloads());
-    h.advance(10000);
-    h.applet._render();
-    assert.equal(h.applet._view.pacing.classes[1].expired, true);
-    assert.equal(h.applet._view.workloads.some(row => row.expired), false);
-    h.applet._refresh(false, true);
-    assert.equal(h.requests.size, 3);
+    assert.equal(h.applet._view.paceRows[0].expired, true);
 });
 
 test('forecast staleness does not rebuild the account popup while hovered', () => {
@@ -280,8 +254,7 @@ test('forecast staleness does not rebuild the account popup while hovered', () =
     h.advance(180000);
     h.applet._render();
     assert.equal(rebuilt, false);
-    assert.equal(h.applet._view.workloads[1].stale, true);
-    assert.equal(h.applet._menuRebuildPending, true);
+    assert.equal(h.applet._view.paceRows[1].stale, true);
 });
 
 test('guidance changes do not rebuild the account popup while hovered', () => {
@@ -291,13 +264,12 @@ test('guidance changes do not rebuild the account popup while hovered', () => {
     h.applet._menuSignature = h.applet._menuStateSignature();
     let rebuilt = false;
     h.applet._renderMenu = () => { rebuilt = true; };
-    const response = fixtures.nextResetWorkloads();
-    response.rows[1].nextReset.guidanceState = 'uncertain';
+    const response = fixtures.workloads();
+    response.workloads[1].weekly.quality = 'unavailable';
     h.applet._refresh(false, true);
     h.replyOutlook(response);
-    assert.equal(h.applet._view.paceRows[0].valueText, 'Limited evidence');
+    assert.equal(h.applet._view.paceRows[0].valueText, 'Unavailable');
     assert.equal(rebuilt, false);
-    assert.equal(h.applet._menuRebuildPending, true);
 });
 
 test('ordinary account polling stays available during forecast backoff', () => {
@@ -320,4 +292,62 @@ test('removing the applet cleans up its independent forecast clock', () => {
     assert.equal(h.timers.has(987), false);
     assert.equal(h.applet._forecastClockId, 0);
     assert.equal(h.applet._destroyed, true);
+});
+
+
+test('availability changes in place through polling while account bars are hovered', () => {
+    const h = appletHarness();
+    const summary = h.createSummary();
+    h.applet._forecastSummaryItem = summary;
+    h.applet.menu.isOpen = true;
+    h.applet._menuPointerInside = true;
+    h.applet._menuSignature = h.applet._menuStateSignature();
+    h.applet._renderMenu = () => assert.fail('Hovered bars rebuilt');
+    h.applet._refresh(false, true);
+    const payload = fixtures.workloads();
+    payload.workloads[1].availability.availableAccounts = 2;
+    h.replyOutlook(payload);
+    assert.equal(summary._lines.get('class:codex').available.text, '2');
+    assert.match(summary.actor.accessible_name, /2 available now/);
+});
+
+test('receipt clocks handle client skew and repeated cached envelopes without renewing evidence', () => {
+    const h = appletHarness();
+    h.advance(90000);
+    h.applet._refresh();
+    h.reply('/public/v1/accounts', { schema: 'clankermux.public.accounts.v1', generatedAt: fixtures.NOW_ISO, accounts: fixtures.accounts() });
+    h.advance(2000);
+    h.reply('/public/v1/status', fixtures.status());
+    const payload = fixtures.workloads();
+    payload.generatedAt = fixtures.NOW_ISO;
+    h.replyOutlook(payload);
+    assert.equal(h.applet._view.nowMs, fixtures.NOW + 2000);
+    assert.equal(h.applet._view.workloadsNowMs, fixtures.NOW);
+    assert.equal(h.applet._view.paceRows[0].percent, 25);
+    h.advance(180000);
+    h.applet._refresh(true, true);
+    h.replyOutlook(payload);
+    assert.equal(h.applet._view.paceRows[0].panelText, 'Stale');
+    assert.equal(h.applet._view.paceRows[0].availability.text, 'stale');
+});
+
+test('account errors withhold forecasts, preserve usage and defer hovered popup rebuilding', () => {
+    const h = appletHarness();
+    h.applet._refresh();
+    h.reply('/public/v1/accounts', { schema: 'clankermux.public.accounts.v1', accounts: fixtures.accounts() });
+    h.reply('/public/v1/status', null, new Error('status offline'));
+    h.replyOutlook();
+    assert.equal(h.applet._view.accounts[0].windows[1].forecastQuality, 'supported');
+    h.applet.menu.isOpen = true;
+    h.applet._menuPointerInside = true;
+    h.applet._menuSignature = h.applet._menuStateSignature();
+    h.applet._renderMenu = () => assert.fail('Hovered bars rebuilt');
+    h.applet._refresh();
+    h.reply('/public/v1/accounts', null, new Error('accounts offline'));
+    h.reply('/public/v1/status', fixtures.status());
+    const account = h.applet._view.accounts[0];
+    assert.equal(account.windows[1].percent, 60);
+    assert.equal(account.windows[1].forecastText, '—');
+    assert.equal(account.measurementNotice, 'cached usage');
+    assert.equal(h.applet._menuRebuildPending, true);
 });

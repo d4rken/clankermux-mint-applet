@@ -1,36 +1,55 @@
 {
   "layout": {
     "type": "layout",
-    "pages": ["connection-page", "display-page"],
+    "pages": [
+      "connection-page",
+      "display-page"
+    ],
     "connection-page": {
       "type": "page",
       "title": "Connection",
-      "sections": ["connection-section", "polling-section"]
+      "sections": [
+        "connection-section",
+        "polling-section"
+      ]
     },
     "display-page": {
       "type": "page",
       "title": "Display",
-      "sections": ["panel-section", "details-section"]
+      "sections": [
+        "panel-section",
+        "details-section"
+      ]
     },
     "connection-section": {
       "type": "section",
       "title": "Clankermux API",
-      "keys": ["api-url", "connection-note"]
+      "keys": [
+        "api-url",
+        "connection-note"
+      ]
     },
     "polling-section": {
       "type": "section",
       "title": "Polling",
-      "keys": ["refresh-interval", "request-timeout"]
+      "keys": [
+        "refresh-interval",
+        "request-timeout"
+      ]
     },
     "details-section": {
       "type": "section",
       "title": "Popup",
-      "keys": ["show-scoped-limits", "default-candidate-first"]
+      "keys": [
+        "show-scoped-limits"
+      ]
     },
     "panel-section": {
       "type": "section",
       "title": "Panel",
-      "keys": ["panel-display"]
+      "keys": [
+        "panel-display"
+      ]
     }
   },
   "api-url": {
@@ -41,7 +60,7 @@
   },
   "connection-note": {
     "type": "label",
-    "description": "The applet reads Clankermux's unauthenticated, read-only /public/v1 status, accounts, runway, pacing, and workload-headroom endpoints. Enter a complete HTTP or HTTPS URL above; hostnames and IP addresses are both supported."
+    "description": "The applet reads Clankermux's unauthenticated, read-only /public/v1 accounts, status, and workloads endpoints (API 2026.9.36 or newer)."
   },
   "refresh-interval": {
     "type": "spinbutton",
@@ -75,11 +94,5 @@
       "Forecast advice": "forecast"
     },
     "tooltip": "Usage averages the weekly percentages across each provider's accounts, with equal weight per account. Forecast advice shows server guidance until the next weekly reset."
-  },
-  "default-candidate-first": {
-    "type": "switch",
-    "default": true,
-    "description": "Put the default routing candidate first",
-    "tooltip": "This is the account selected for a fresh, unpinned, nominal-sized request; pinned and affinity-routed requests may choose differently."
   }
 }

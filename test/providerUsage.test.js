@@ -79,24 +79,3 @@ test('cached usage is marked without suppressing observed percentages', () => {
     }
     assert.equal(model.providerUsageRows([account('codex', 83)], false, NOW, true)[0].valueText, '83%*');
 });
-
-test('forecast summary is compact, qualifies coverage, and does not invent a percentage', () => {
-    const response = fixtures.nextResetWorkloads();
-    const raw = response.rows[0];
-    Object.assign(raw, { eligibleAccounts: 5, unreadableAccounts: 3, learningAccounts: 3 });
-    Object.assign(raw.nextReset, { guidanceState: 'uncertain', headroomPct: 50 });
-    const row = model.workloadHeadroomView(response, NOW).rows[0];
-    const text = model.forecastSummary(row, NOW);
-    assert.match(text, /Limited evidence · 2\/5 modeled · 3 learning/);
-    assert.doesNotMatch(text, /50%|\n/);
-    assert.doesNotMatch(model.forecastSummary({ ...row, stale: true, valueText: 'Stale' }, NOW), /modeled|learning/);
-    assert.doesNotMatch(model.forecastSummary({ ...row, unreadableAccounts: 0, learningAccounts: 0 }, NOW), /modeled/);
-    assert.equal(model.forecastSummary({ label: 'GPT', valueText: 'No accounts', eligibleAccounts: 0, unreadableAccounts: 0 }, NOW), 'GPT: No accounts');
-});
-
-test('forecast summary includes time only for a stated exhaustion before reset', () => {
-    const row = { label: 'GPT', valueText: 'May run out', exhaustsAt: NOW + 3600000, resetsAt: NOW + 7200000 };
-    assert.equal(model.forecastSummary(row, NOW), 'GPT: May run out ~1h');
-    assert.equal(model.forecastSummary({ ...row, resetsAt: row.exhaustsAt }, NOW), 'GPT: May run out');
-    assert.match(model.forecastSummary({ label: 'Fable', valueText: '↓ ~20% pace*', basis: 'bound', percent: 20 }, NOW), /20% pace \(bound\)/);
-});
