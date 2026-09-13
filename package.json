@@ -1,6 +1,6 @@
 {
   "name": "clankermux-usage-cinnamon-applet",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "private": true,
   "description": "Clankermux weekly usage, budget guidance, and current availability in the Cinnamon panel",
   "license": "GPL-3.0-only",
