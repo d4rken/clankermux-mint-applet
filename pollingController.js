@@ -181,7 +181,7 @@ var PollingController = (() => {
         return { ensure, restart, sourceIds, start, stop };
     }
 
-    function createOutlookSchedule() {
+    function createOutlookSchedule(intervalMs = 10000) {
         let nextAttemptAt = 0;
         let failures = 0;
         let lastExpiredKey = '';
@@ -191,12 +191,12 @@ var PollingController = (() => {
                 if (!force && !newExpiry && nowMs < nextAttemptAt)
                     return false;
                 lastExpiredKey = expiredKey;
-                nextAttemptAt = nowMs + 60000;
+                nextAttemptAt = nowMs + intervalMs;
                 return true;
             },
             complete(nowMs, failed) {
-                failures = failed ? Math.min(failures + 1, 4) : 0;
-                nextAttemptAt = nowMs + Math.min(300000, 60000 * Math.pow(2, failures));
+                failures = failed ? Math.min(failures + 1, 5) : 0;
+                nextAttemptAt = nowMs + Math.min(300000, intervalMs * Math.pow(2, failures));
             },
         };
     }

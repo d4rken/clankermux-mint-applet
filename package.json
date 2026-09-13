@@ -2,7 +2,7 @@
   "name": "clankermux-usage-cinnamon-applet",
   "version": "3.0.0",
   "private": true,
-  "description": "Cinnamon panel applet for Clankermux pace, quota runway, and account usage",
+  "description": "Clankermux weekly usage, budget guidance, and current availability in the Cinnamon panel",
   "license": "GPL-3.0-only",
   "repository": {
     "type": "git",

@@ -6,69 +6,55 @@
 A native Linux Mint/Cinnamon panel applet for monitoring the accounts behind a
 [Clankermux](https://github.com/d4rken/clankermux) proxy.
 
-The panel shows one pace bar per servable class and per model family. For
-example:
+The panel defaults to combined weekly usage, with one icon per provider and an
+optional Fable indicator:
 
 ```text
-Claude [ cut | add ]  GPT [ cut | add ]  Fable [ cut | add ]
+[OpenAI] 50%   [Anthropic] 30%   [F] 95%
 ```
 
-Class bars (Claude, GPT) come from the class burn ratio relative to sustainable
-pace. A rightward bar means burn can rise, a leftward bar means it has to come
-down, the magnitude is capped at the graph's 50% scale, and the colour follows
-the server's burn tone. When a class has no stated burn ratio, or its pacing
-reading is stale or past its deadline, the bar falls back to that class's
-headroom until the next weekly reset.
+Each value is the average of that provider's readable weekly account percentages,
+with equal weight per account, including paused accounts. Fable uses its own
+weekly limits. These are account averages, not capacity-weighted totals; the API
+does not provide quota sizes. Missing readings are excluded rather than counted
+as zero. `*` marks partial or cached readings; hover shows how many accounts are
+included. Five-hour usage stays in the account bars.
+Accounts whose usage measurement is not applicable are excluded. Missing family
+windows count as missing readings; no zero usage is inferred.
 
-Family bars (Fable) come from the conservative family headroom until the next
-weekly reset. A measured outcome without a percentage fills the bar to scale in
-its direction; a structural estimate shows the same direction in grey.
+Choose **Configure > Display > Panel display > Forecast advice** to show:
 
-The panel carries no availability counter: account states live in the tooltip
-and the popup. `Stale` and `Expired` stay visible in the panel. Exact
-percentages are hidden by default because pace moves as recent burn changes;
-the tooltip and popup always show them, and settings can add them to the panel.
+```text
+[OpenAI] ↑ ~25% room   [Anthropic] ↓ ~20% pace   [F] ↓ ~20% pace*
+```
 
-Click the applet for:
+Forecast headlines use `/workloads` weekly budget guidance until the next weekly
+reset, assuming the current per-account consumption pattern. Only
+`weekly.pace.state: estimate` supplies an estimated adjustment. Positive values
+use the last tested passing increase; negative values suggest a reduction.
+Zero means no additional tested increase fits. Search limits are not advice.
+Percentages are neither quota remaining nor agent-count targets.
 
-- pacing detail per workload: burn ratio, weekly usage on the least-used
-  account, projected run-out count, failover depth, and reset countdown
-- quota runway with its cause, and a coverage qualifier when keys are unobserved
-- per-account state with 5-hour and 7-day usage bars
-- model-specific weekly limits such as Fable
-- per-window forecasts and reset countdowns where Clankermux has sufficient evidence
-- the default candidate for a fresh, unpinned, nominal-sized request
-- availability, credential, provider-overload, and measurement state
-- accounts/status freshness plus cached or unavailable state for the pace feeds
-- manual refresh and a shortcut to the Clankermux dashboard
+Fable overlaps Claude through `parentWorkloadId`; do not add their percentages.
+`*` identifies a conservative bound on that row. The F monogram is not an official
+brand mark. A missing Fable workload is omitted.
 
-Provider overloads appear in the tooltip and the popup, which distinguishes
-provider-wide from model-scoped breakers, including open and half-open recovery
-states.
+Click the applet for account utilization bars and a compact, clickable summary.
+It shows **weekly budget** separately from **available now**. Weekly risk can
+coexist with available paid fallback. Availability describes a fresh, unpinned,
+nominal-size request and is not a guarantee for restricted API keys.
+Clicking the summary opens the dashboard.
 
-The exact class headroom is a threshold. Family headroom is a conservative
-bound because Clankermux cannot isolate a family's share of account-wide burn.
-Only server-classified measured projections produce headroom percentages;
-structural estimates are marked early and stay grey, and missing or unknown
-evidence withholds advice altogether. Exhaustion estimates with unreadable
-accounts are lower bounds on runway.
-Family coverage distinguishes accounts that have not used the family this week
-from other unreadable accounts. Both remain excluded from the projection;
-untouched accounts do not imply a 0% usage reading. Older servers without
-`unopenedAccounts` retain the combined unreadable count.
+Weekly coverage displays disjoint modeled, idle, learning, and unavailable
+counts. Partial forecasts describe only the modeled subset. Five-hour learning
+no longer blocks weekly guidance. Unknown numbers remain unavailable; stale
+or expired advice is withheld until refreshed.
 
-Older servers without `nextReset`, or rows with a null or invalid deadline,
-report no reading instead of a guess. When a deadline passes, the applet marks
-it expired and requests an updated snapshot. It never advances a deadline or
-assumes quota has recovered.
-
-Paused accounts remain visible in account details. Workload forecasts and pacing
-use the server's active capacity; the applet neither averages account usage to
-calculate pace nor adds capacity for banked reset credits.
-
-Usage bars turn orange at 80% and red at 100%. Individual forecast confidence
-remains visible in the clicked details; low-confidence exhaustion is never
-colored as certain.
+Account bars use window forecast `outcome`, `quality` and `reason`, displaying
+`out ~2h`, `no usage`, `unstarted`, `learning`, or `—`. Limited evidence uses
+warning color and an accessible explanation. `reassessAt` is the earliest
+useful fresh reading, never a promise that learning ends. Observed usage remains
+separate from forecasts and is not converted into pace advice.
 
 ## Install
 
@@ -88,7 +74,7 @@ http://127.0.0.1:8080
 
 Right-click the applet and choose **Configure** to enter a different hostname,
 IP address, or complete HTTP/HTTPS URL. The settings window also controls the
-polling interval, panel bars, popup runway warning duration, and family visibility.
+polling interval, panel mode, and family visibility.
 
 ## API and security
 
@@ -96,28 +82,32 @@ The applet uses Clankermux's unauthenticated, read-only public widget API:
 
 - `GET /public/v1/status`
 - `GET /public/v1/accounts`
-- `GET /public/v1/runway`
-- `GET /public/v1/pacing`
-- `GET /public/v1/workload-headroom`
+- `GET /public/v1/workloads`
 
-Status and accounts follow the configured refresh interval, which defaults to
-30 seconds. Pace, runway, and workload projections refresh independently about
-once per minute, immediately after a new deadline expires, or with **Refresh now**.
-Failed forecast requests back off from two minutes to a five-minute cap. A
-successful cycle restores the minute cadence; manual refresh bypasses backoff.
-The server memoizes pacing and workload headroom for 60 seconds, so an early
-refresh may return the same computation.
+Requires the replacement API from **2026.9.36 or newer**. Status uses service
+readiness and configured/paused totals. The obsolete routing-candidate badge
+and setting are removed; account rows follow the server's stable order.
 
-Forecasts become stale on a fetch failure, when their computation timestamp is
-missing, or when `generatedAt` is at least three minutes old. Fetching the same
-cached response does not make it fresh. A stale bar goes neutral and keeps its
-last reading in the popup. Computation time is distinct from each account's
-usage observation time. Countdowns and freshness update between network polls.
+Accounts and status follow the configured interval (30 seconds by default).
+Workloads poll every 10 seconds for availability, with exponential retries
+from 20 seconds up to five minutes. Manual refresh bypasses backoff. A newly
+expired weekly checkpoint triggers a refresh without advancing the deadline.
 
-These endpoints contain no personal identities, credential material, API-key
-metadata, or write access.
+Availability and weekly budgets have separate `computedAt` timestamps; weekly
+budgets also use `evidenceObservedAt`. A new envelope `generatedAt` does not
+refresh cached evidence. Missing timestamps, network errors and observations
+at least three minutes old suppress advice. Fresh availability remains visible
+even when weekly evidence is stale, and vice versa.
+
+Account names are public. Credentials, API-key secrets, prompts, and response
+bodies are not exposed. The widget uses only read-only endpoints.
 
 ## Development
+
+The invented payloads in `test/api-examples` pin the public v1 guidance contract,
+including partial weekly evidence, search limits and family restrictions. They were
+copied from the server documentation on 2026-09-09. New object fields are accepted;
+unknown guidance states and intervals remain neutral.
 
 No third-party dependencies are required. Run the checks with:
 

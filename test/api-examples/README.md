@@ -1,0 +1,1 @@
+Invented examples copied unchanged from clankermux/docs/public-api/examples for API release 2026.9.36 on 2026-09-09. These pin the replacement public contract; they are not production account snapshots.

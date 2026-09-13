@@ -103,7 +103,7 @@ test('restart and stop never remove an already-missing source ID', () => {
 
 
 test('forecast polling follows a minute cadence with capped backoff and recovery', () => {
-    const schedule = polling.createOutlookSchedule();
+    const schedule = polling.createOutlookSchedule(60000);
     assert.equal(schedule.begin(0), true);
     schedule.complete(0, false);
     assert.equal(schedule.begin(59999), false);
@@ -125,7 +125,7 @@ test('forecast polling follows a minute cadence with capped backoff and recovery
 });
 
 test('an expired deadline requests a fresh snapshot once and respects failure backoff', () => {
-    const schedule = polling.createOutlookSchedule();
+    const schedule = polling.createOutlookSchedule(60000);
     schedule.begin(0);
     schedule.complete(0, false);
     assert.equal(schedule.begin(10000, false, 'class:codex:deadline1'), true);
@@ -138,9 +138,21 @@ test('an expired deadline requests a fresh snapshot once and respects failure ba
 });
 
 test('manual refresh can bypass forecast backoff', () => {
-    const schedule = polling.createOutlookSchedule();
+    const schedule = polling.createOutlookSchedule(60000);
     schedule.begin(0);
     schedule.complete(0, true);
     assert.equal(schedule.begin(1000), false);
     assert.equal(schedule.begin(1000, true), true);
+});
+
+
+test('live workload availability defaults to ten-second polling with bounded retries', () => {
+    const schedule = polling.createOutlookSchedule();
+    assert.equal(schedule.begin(0), true);
+    schedule.complete(0, false);
+    assert.equal(schedule.begin(9999), false);
+    assert.equal(schedule.begin(10000), true);
+    schedule.complete(10000, true);
+    assert.equal(schedule.begin(29999), false);
+    assert.equal(schedule.begin(30000), true);
 });
