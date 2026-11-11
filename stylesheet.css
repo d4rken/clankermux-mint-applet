@@ -126,9 +126,16 @@
     width: 75px;
 }
 
-.clankermux-panel-content,
+.clankermux-panel-content {
+    spacing: 8px;
+}
+
 .clankermux-panel-workloads {
     spacing: 8px;
+}
+
+.clankermux-panel-workloads.stacked {
+    spacing: 0;
 }
 
 .clankermux-panel-workload {

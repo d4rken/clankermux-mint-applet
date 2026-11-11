@@ -8,20 +8,29 @@ a [Clankermux](https://github.com/d4rken/clankermux) proxy.
 
 ## What it looks like
 
-Combined weekly usage, one icon per provider:
+Combined weekly usage, one row per provider, sized to the panel height:
 
 ```text
-[OpenAI] 50%   [Anthropic] 30%   [F] 95%
+[OpenAI]    50%
+[Anthropic] 30%
+[F]         95%
 ```
 
-Or forecast advice, selected under **Configure > Display > Panel display**:
+Or forecast advice, selected under **Configure > Display > Panel display**.
+`↑25%` estimates the current usage rate can rise 25% and still last until the
+reset; `↓20%` estimates it needs to drop 20% to last:
 
 ```text
-[OpenAI] ↑ ~25% room   [Anthropic] ↓ ~20% pace   [F] ↓ ~20% pace*
+[OpenAI]    ↑25%
+[Anthropic] ↓20%
+[F]         ↓20%*
 ```
+
+Panels under 39px show the readings side by side instead of stacked.
 
 Click the applet for per-account usage bars, weekly budget, and current
-availability. `*` marks a partial or cached reading.
+availability. In usage mode `*` marks a partial or cached reading; in forecast
+mode it marks a conservative bound.
 
 ## Install
 

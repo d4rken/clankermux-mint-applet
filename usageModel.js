@@ -377,8 +377,12 @@ var UsageModel = (() => {
         });
     }
 
+    // ↑ ~25% room → ↑25%, ↓ ~20% pace* → ↓20%*, ~0% pace → ±0%
     function panelWorkloadLabel(row) {
-        return row?.panelText || '?';
+        if (typeof row?.percent !== 'number')
+            return row?.panelText || '?';
+        const arrow = row.percent > 0 ? '↑' : row.percent < 0 ? '↓' : '±';
+        return `${arrow}${Math.round(Math.abs(row.percent))}%${row.qualification === 'conservative_bound' ? '*' : ''}`;
     }
 
     function forecastSummary(row, nowMs = Date.now()) {

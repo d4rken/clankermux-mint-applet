@@ -30,12 +30,16 @@ test('only estimate state renders signed percentages, including zero and family 
         assert.equal(view(p)[0].percent, null);
         assert.doesNotMatch(view(p)[0].panelText, /%/);
     }
-    for (const [changePct,text] of [[25,'↑ ~25% room'],[-20,'↓ ~20% pace'],[0,'~0% pace']]) {
+    for (const [changePct,text,compact] of [[25,'↑ ~25% room','↑25%'],[-20,'↓ ~20% pace','↓20%'],[0,'~0% pace','±0%'],[-12.46,'↓ ~12.5% pace','↓12%']]) {
         const p=f.workloads();p.workloads[1].weekly.pace.changePct=changePct;
         assert.equal(view(p)[0].panelText,text);
+        assert.equal(model.panelWorkloadLabel(view(p)[0]),compact);
     }
     const p=f.workloads();p.workloads[1].weekly.pace.qualification='conservative_bound';
     assert.equal(view(p)[0].panelText, '↑ ~25% room*');
+    assert.equal(model.panelWorkloadLabel(view(p)[0]), '↑25%*');
+    p.workloads[1].weekly.pace.state='increase_limit';
+    assert.equal(model.panelWorkloadLabel(view(p)[0]), 'Room');
 });
 
 test('invalid numeric, quality, coverage or qualification withholds adjustment', () => {
