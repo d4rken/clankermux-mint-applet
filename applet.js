@@ -12,6 +12,19 @@ const St = imports.gi.St;
 
 const UUID = 'clankermux-usage@d4rken';
 const PROGRESS_WIDTH = 116;
+const PANEL_ROWS = 3;
+const MIN_STACKED_ROW = 13;
+const POPUP_ICON_SIZE = 16;
+
+// Logical px. 50px panel: stacked 16px rows, 11px text, 12px icons.
+// 30px panel: one row, theme font, 16px icons.
+function panelMetrics(panelHeight, uiScale) {
+    const height = Math.floor(panelHeight / (uiScale || 1));
+    const row = Math.floor(height / PANEL_ROWS);
+    if (row < MIN_STACKED_ROW)
+        return { stacked: false, fontPx: null, iconPx: Math.max(8, Math.min(POPUP_ICON_SIZE, height - 4)) };
+    return { stacked: true, fontPx: Math.round(row * 0.7), iconPx: row - 4 };
+}
 
 function createProgressTrack(percent, severity, width, styleClass = 'clankermux-progress-track') {
     const track = new St.Bin({
@@ -82,27 +95,28 @@ function createUsageBar(window, model, nowMs) {
     return row;
 }
 
-function createWorkloadIcon(row, iconDirectory) {
+function createWorkloadIcon(row, iconDirectory, iconSize = POPUP_ICON_SIZE) {
     return new St.Icon({
         gicon: Gio.icon_new_for_string(`${iconDirectory}/${row.icon}-symbolic.svg`),
         icon_type: St.IconType.SYMBOLIC,
-        icon_size: 16,
+        icon_size: iconSize,
         y_align: Clutter.ActorAlign.CENTER,
     });
 }
 
-function createPanelWorkload(row, iconDirectory) {
+function createPanelWorkload(row, iconDirectory, iconSize) {
     const meter = new St.BoxLayout({ style_class: 'clankermux-panel-workload' });
-    meter.add_child(createWorkloadIcon(row, iconDirectory));
+    meter._clankermuxIcon = createWorkloadIcon(row, iconDirectory, iconSize);
+    meter.add_child(meter._clankermuxIcon);
     meter._clankermuxValue = new St.Label({ y_align: Clutter.ActorAlign.CENTER });
     meter.add_child(meter._clankermuxValue);
     return meter;
 }
 
-function updatePanelWorkload(meter, row, displayValue) {
+function updatePanelWorkload(meter, row, displayValue, spokenValue = displayValue) {
     meter._clankermuxValue.set_text(displayValue);
     meter._clankermuxValue.set_style_class_name(`clankermux-panel-pace-value ${row.severity}`);
-    meter.set_accessible_name(`${row.label}: ${displayValue}`);
+    meter.set_accessible_name(`${row.label}: ${spokenValue}`);
 }
 
 class ForecastSummaryMenuItem extends PopupMenu.PopupBaseMenuItem {
@@ -200,6 +214,7 @@ class AccountMenuItem extends PopupMenu.PopupBaseMenuItem {
 class ClankermuxUsageApplet extends Applet.Applet {
     constructor(metadata, orientation, panelHeight, instanceId, model, polling) {
         super(orientation, panelHeight, instanceId);
+        this._panelMetrics = panelMetrics(panelHeight, global.ui_scale);
         this._iconDirectory = `${metadata.path}/icons`;
         this._metadata = metadata;
         this._pollingModule = polling;
@@ -254,6 +269,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._panelContent.add_child(this._panelWorkloadBox);
         this._panelContent.add_child(this._panelEmptyLabel);
         this.actor.add(this._panelContent, { y_align: St.Align.MIDDLE, y_fill: false });
+        this._applyPanelMetrics();
         this.set_applet_tooltip('Loading Clankermux usage…');
 
         this.menuManager = new PopupMenu.PopupMenuManager(this);
@@ -548,11 +564,11 @@ class ClankermuxUsageApplet extends Applet.Applet {
             const displayValue = showForecast ? this._model.panelWorkloadLabel(row) : row.valueText;
             let meter = this._panelWorkloads.get(row.key);
             if (!meter) {
-                meter = createPanelWorkload(row, this._iconDirectory);
+                meter = createPanelWorkload(row, this._iconDirectory, this._panelMetrics.iconPx);
                 this._panelWorkloads.set(row.key, meter);
                 this._panelWorkloadBox.add_child(meter);
             }
-            updatePanelWorkload(meter, row, displayValue);
+            updatePanelWorkload(meter, row, displayValue, showForecast ? row.panelText : row.valueText);
             meter.visible = true;
         }
         this._panelEmptyLabel.visible = false;
@@ -686,6 +702,20 @@ class ClankermuxUsageApplet extends Applet.Applet {
         const url = this._model.normalizeBaseUrl(this.apiUrl);
         if (url)
             Gio.app_info_launch_default_for_uri(url, global.create_app_launch_context());
+    }
+
+    on_panel_height_changed() {
+        this._panelMetrics = panelMetrics(this._panelHeight, global.ui_scale);
+        this._applyPanelMetrics();
+    }
+
+    _applyPanelMetrics() {
+        const { stacked, fontPx, iconPx } = this._panelMetrics;
+        this._panelWorkloadBox.vertical = stacked;
+        this._panelWorkloadBox.set_style_class_name(stacked ? 'clankermux-panel-workloads stacked' : 'clankermux-panel-workloads');
+        this._panelContent.set_style(fontPx ? `font-size: ${fontPx}px;` : null);
+        for (const meter of this._panelWorkloads.values())
+            meter._clankermuxIcon.set_icon_size(iconPx);
     }
 
     on_applet_clicked() {

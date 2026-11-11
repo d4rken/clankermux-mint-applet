@@ -20,6 +20,8 @@ function appletHarness() {
         set_text(text) { this.text = text; }
         set_style_class_name(name) { this.style_class = name; }
         set_accessible_name(name) { this.accessible_name = name; }
+        set_style(style) { this.style = style; }
+        set_icon_size(size) { this.icon_size = size; }
     }
     class MenuItem {
         constructor() { this.actor = new Actor(); }
@@ -42,8 +44,9 @@ function appletHarness() {
             source_remove(id) { timers.delete(id); },
         },
     };
-    const { AppletClass, SummaryClass } = vm.runInNewContext(`${source}\n({ AppletClass: ClankermuxUsageApplet, SummaryClass: ForecastSummaryMenuItem })`, {
+    const { AppletClass, SummaryClass, panelMetrics } = vm.runInNewContext(`${source}\n({ AppletClass: ClankermuxUsageApplet, SummaryClass: ForecastSummaryMenuItem, panelMetrics })`, {
         imports,
+        global: { ui_scale: 2 },
         Date: class extends Date { static now() { return now; } },
     });
     const applet = Object.create(AppletClass.prototype);
@@ -58,6 +61,7 @@ function appletHarness() {
         _requestGeneration: 0, _refreshing: false, _destroyed: false,
         requestTimeout: 8,
         _panelEmptyLabel: new Actor(), _panelWorkloadBox: new Actor(), _panelWorkloads: new Map(),
+        _panelContent: new Actor(), _panelMetrics: panelMetrics(100, 2),
         set_applet_tooltip(text) { this.tooltip = text; },
         menu: { isOpen: false },
         _getJson(path, generation, cancellable, callback) { requests.set(path, callback); },
@@ -71,7 +75,7 @@ function appletHarness() {
     };
     applet._render();
     return {
-        applet, requests, timers,
+        applet, requests, timers, panelMetrics,
         renderPanel() { AppletClass.prototype._renderPanel.call(applet); },
         createSummary() { return new SummaryClass(applet._view.paceRows, model, now, '/icons'); },
         advance(ms) { now += ms; },
@@ -98,7 +102,9 @@ test('panel mode switches between actual usage and guidance while reusing icons'
     h.applet.panelDisplay = 'forecast';
     h.renderPanel();
     assert.equal(h.applet._panelWorkloads.get('class:codex'), meters[0]);
-    assert.equal(meters[0]._clankermuxValue.text, '↑ ~25% room');
+    assert.equal(meters[0]._clankermuxValue.text, '↑25%');
+    assert.equal(meters[0]._clankermuxIcon.icon_size, 12);
+    assert.equal(meters[0].accessible_name, 'GPT: ↑ ~25% room');
     assert.match(h.applet.tooltip, /Until next weekly reset/);
     h.applet.panelDisplay = 'usage';
     h.applet.showScopedLimits = false;
@@ -106,6 +112,37 @@ test('panel mode switches between actual usage and guidance while reusing icons'
     h.renderPanel();
     assert.equal(meters[2].visible, false);
     assert.equal(meters[0]._clankermuxValue.text, '10%');
+});
+
+test('stacked panel rows scale text and icons with panel height', () => {
+    const { panelMetrics } = appletHarness();
+    assert.deepEqual({ ...panelMetrics(100, 2) }, { stacked: true, fontPx: 11, iconPx: 12 });
+    assert.deepEqual({ ...panelMetrics(78, 2) }, { stacked: true, fontPx: 9, iconPx: 9 });
+    assert.deepEqual({ ...panelMetrics(76, 2) }, { stacked: false, fontPx: null, iconPx: 16 });
+    assert.deepEqual({ ...panelMetrics(20, 1) }, { stacked: false, fontPx: null, iconPx: 16 });
+});
+
+test('panel height changes restack, restyle and resize existing rows', () => {
+    const h = appletHarness();
+    h.renderPanel();
+    const meters = [...h.applet._panelWorkloads.values()];
+    for (const [height, stacked, style, icon] of [[80, true, 'font-size: 9px;', 9], [76, false, null, 16], [100, true, 'font-size: 11px;', 12]]) {
+        h.applet._panelHeight = height;
+        h.applet.on_panel_height_changed();
+        assert.equal(h.applet._panelWorkloadBox.vertical, stacked);
+        assert.equal(h.applet._panelWorkloadBox.style_class,
+            stacked ? 'clankermux-panel-workloads stacked' : 'clankermux-panel-workloads');
+        assert.equal(h.applet._panelContent.style, style);
+        assert.deepEqual(meters.map(m => m._clankermuxIcon.icon_size), [icon, icon, icon]);
+    }
+});
+
+test('rows created after a panel height change use the new icon size', () => {
+    const h = appletHarness();
+    h.applet._panelHeight = 76;
+    h.applet.on_panel_height_changed();
+    h.renderPanel();
+    assert.deepEqual([...h.applet._panelWorkloads.values()].map(m => m._clankermuxIcon.icon_size), [16, 16, 16]);
 });
 
 test('summary immediately withdraws stale or expired advice without rebuilding hovered bars', () => {
