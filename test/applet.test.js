@@ -9,11 +9,45 @@ const polling = require('../pollingController');
 const fixtures = require('./publicV1Fixtures');
 const source = fs.readFileSync(require.resolve('../applet.js'), 'utf8');
 
-function appletHarness() {
+const IOErrorEnum = { CANCELLED: 19 };
+
+class FakeSubprocess {
+    constructor(argv, registry) {
+        this.argv = argv;
+        this.killed = false;
+        registry.push(this);
+    }
+    communicate_utf8_async(stdin, cancellable, callback) {
+        this.cancellable = cancellable;
+        this.callback = callback;
+    }
+    // Completes the pending communicate call: either curl's output or a GLib error.
+    finish({ exit = 0, stdout = '', stderr = '', error = null } = {}) {
+        this.exit = exit;
+        this.callback(this, { stdout, stderr, error });
+    }
+    communicate_utf8_finish(result) {
+        if (result.error)
+            throw result.error;
+        return [true, result.stdout, result.stderr];
+    }
+    get_if_exited() { return true; }
+    get_exit_status() { return this.exit; }
+    force_exit() { this.killed = true; }
+}
+
+function cancelledError() {
+    const error = new Error('Operation was cancelled');
+    error.matches = (domain, code) => domain === IOErrorEnum && code === IOErrorEnum.CANCELLED;
+    return error;
+}
+
+function appletHarness({ curlPath = '/usr/bin/curl', spawnError = null } = {}) {
     let now = fixtures.NOW;
     let nextTimer = 1;
     const timers = new Map();
     const requests = new Map();
+    const subprocesses = [];
     class Actor {
         constructor(properties = {}) { Object.assign(this, properties); this.children = []; this.visible = true; }
         add_child(child) { this.children.push(child); }
@@ -30,7 +64,20 @@ function appletHarness() {
     const imports = {
         ui: { applet: { Applet: class {} }, popupMenu: { PopupBaseMenuItem: MenuItem } },
         gi: {
-            Gio: { Cancellable: class { cancel() {} }, icon_new_for_string(path) { return path; } },
+            Gio: {
+                Cancellable: class { cancel() {} },
+                icon_new_for_string(path) { return path; },
+                IOErrorEnum,
+                SubprocessFlags: { STDOUT_PIPE: 1, STDERR_PIPE: 2 },
+                Subprocess: {
+                    new(argv) {
+                        if (spawnError)
+                            throw spawnError;
+                        return new FakeSubprocess(argv, subprocesses);
+                    },
+                },
+            },
+            GLib: { find_program_in_path(name) { return name === 'curl' ? curlPath : null; } },
             St: { BoxLayout: Actor, Label: Actor, Icon: Actor, IconType: { SYMBOLIC: 1 } },
             Clutter: { ActorAlign: { CENTER: 1 } },
         },
@@ -65,7 +112,6 @@ function appletHarness() {
         set_applet_tooltip(text) { this.tooltip = text; },
         menu: { isOpen: false },
         _getJson(path, generation, cancellable, callback) { requests.set(path, callback); },
-        _createSession() {},
         _renderPanel() {},
     });
     // Pass the test clock to the real model, as well as to the applet's timers.
@@ -75,8 +121,12 @@ function appletHarness() {
     };
     applet._render();
     return {
-        applet, requests, timers, panelMetrics,
+        applet, requests, timers, panelMetrics, subprocesses,
         renderPanel() { AppletClass.prototype._renderPanel.call(applet); },
+        // Runs the real transport instead of the recording stub above.
+        getJson(path, callback, generation = applet._requestGeneration) {
+            AppletClass.prototype._getJson.call(applet, path, generation, {}, callback);
+        },
         createSummary() { return new SummaryClass(applet._view.paceRows, model, now, '/icons'); },
         advance(ms) { now += ms; },
         reply(path, data, error = null) {
@@ -387,4 +437,42 @@ test('account errors withhold forecasts, preserve usage and defer hovered popup 
     assert.equal(account.windows[1].forecastText, '—');
     assert.equal(account.measurementNotice, 'cached usage');
     assert.equal(h.applet._menuRebuildPending, true);
+});
+
+test('transport fetches through curl and parses the reply', () => {
+    const h = appletHarness();
+    h.applet.apiUrl = '127.0.0.1:8080';
+    const replies = [];
+    h.getJson('/public/v1/status', (...reply) => replies.push(reply));
+    const [proc] = h.subprocesses;
+    assert.equal(proc.argv[1], '--disable');
+    assert.equal(proc.argv.at(-1), 'http://127.0.0.1:8080/public/v1/status');
+    proc.finish({ stdout: '{"serviceState":"ready"}\n200' });
+    assert.deepEqual(replies, [[null, { serviceState: 'ready' }, 200]]);
+});
+
+test('transport reports curl failures and a missing curl binary', () => {
+    const h = appletHarness();
+    h.applet.apiUrl = '127.0.0.1:8080';
+    let reply;
+    h.getJson('/public/v1/status', (error, data, status) => { reply = [error.message, data, status]; });
+    h.subprocesses[0].finish({ exit: 7, stderr: 'curl: (7) Failed to connect\n' });
+    assert.deepEqual(reply, ['Could not connect to Clankermux', null, 0]);
+
+    const missing = appletHarness({ curlPath: null, spawnError: new Error('Failed to execute child process') });
+    missing.applet.apiUrl = '127.0.0.1:8080';
+    missing.getJson('/public/v1/status', error => { reply = error.message; });
+    assert.equal(reply, 'curl not found; install the curl package');
+});
+
+test('cancelled transport kills curl and drops the stale reply', () => {
+    const h = appletHarness();
+    h.applet.apiUrl = '127.0.0.1:8080';
+    const replies = [];
+    h.getJson('/public/v1/status', (...reply) => replies.push(reply));
+    h.applet._requestGeneration++;
+    const [proc] = h.subprocesses;
+    proc.finish({ error: cancelledError() });
+    assert.equal(proc.killed, true);
+    assert.deepEqual(replies, []);
 });
