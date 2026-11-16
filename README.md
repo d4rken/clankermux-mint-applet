@@ -34,7 +34,7 @@ mode it marks a conservative bound.
 
 ## Install
 
-Requires a Clankermux server running **2026.9.36 or newer**.
+Requires `curl` and a Clankermux server running **2026.9.36 or newer**.
 
 ```sh
 make install

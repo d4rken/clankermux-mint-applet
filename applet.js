@@ -1,5 +1,4 @@
 const Applet = imports.ui.applet;
-const ByteArray = imports.byteArray;
 const Clutter = imports.gi.Clutter;
 const FileUtils = imports.misc.fileUtils;
 const Gio = imports.gi.Gio;
@@ -7,7 +6,6 @@ const GLib = imports.gi.GLib;
 const Mainloop = imports.mainloop;
 const PopupMenu = imports.ui.popupMenu;
 const Settings = imports.ui.settings;
-const Soup = imports.gi.Soup;
 const St = imports.gi.St;
 
 const UUID = 'clankermux-usage@d4rken';
@@ -304,7 +302,6 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this.settings.bind('panel-display', 'panelDisplay', this._render.bind(this));
         this.settings.bind('show-scoped-limits', 'showScopedLimits', this._render.bind(this));
 
-        this._createSession();
         this._schedulePolling();
         this._forecastClockId = Mainloop.timeout_add_seconds(1, () => {
             try {
@@ -317,14 +314,6 @@ class ClankermuxUsageApplet extends Applet.Applet {
         });
         this._render();
         this._refresh(true);
-    }
-
-    _createSession() {
-        if (this._session)
-            this._session.abort();
-        this._session = new Soup.Session();
-        this._session.timeout = Number(this.requestTimeout || 8);
-        this._session.user_agent = `${UUID}/1.6`;
     }
 
     _onConnectionSettingsChanged() {
@@ -342,7 +331,6 @@ class ClankermuxUsageApplet extends Applet.Applet {
         this._lastSuccess = 0;
         this._lastError = '';
         this._lastAccountsError = '';
-        this._createSession();
         this._render();
         this._refresh(true);
     }
@@ -379,6 +367,8 @@ class ClankermuxUsageApplet extends Applet.Applet {
         }
     }
 
+    // HTTP runs in a curl child process: libsoup 3.4.4 can dereference a freed
+    // connection inside Cinnamon (GNOME/libsoup#525).
     _getJson(path, generation, cancellable, callback) {
         const baseUrl = this._model.normalizeBaseUrl(this.apiUrl);
         if (!baseUrl) {
@@ -386,44 +376,34 @@ class ClankermuxUsageApplet extends Applet.Applet {
             return;
         }
 
-        let message;
+        const timeoutSeconds = Math.max(2, Number(this.requestTimeout || 8));
+        let proc;
         try {
-            message = Soup.Message.new('GET', `${baseUrl}${path}`);
-            if (!message)
-                throw new Error('Invalid server URL');
-            message.get_request_headers().append('Accept', 'application/json');
+            proc = Gio.Subprocess.new(
+                this._model.curlArgs(`${baseUrl}${path}`, timeoutSeconds, `${UUID}/1.6`),
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE);
         } catch (error) {
-            callback(error, null, 0);
+            const missing = !GLib.find_program_in_path('curl');
+            callback(missing ? new Error('curl not found; install the curl package') : error, null, 0);
             return;
         }
 
-        try {
-            this._session.send_and_read_async(
-                message,
-                Soup.MessagePriority.NORMAL,
-                cancellable,
-                (session, result) => {
-                    if (this._destroyed || generation !== this._requestGeneration)
-                        return;
-                    let data = null;
-                    let error = null;
-                    let status = 0;
-                    try {
-                        status = message.get_status();
-                        const bytes = session.send_and_read_finish(result);
-                        const body = ByteArray.toString(bytes.get_data());
-                        data = JSON.parse(body);
-                        if (status < 200 || status >= 300)
-                            error = new Error(`HTTP ${status}: ${message.get_reason_phrase()}`);
-                    } catch (caught) {
-                        error = caught;
-                    }
-                    callback(error, data, status);
-                }
-            );
-        } catch (error) {
-            callback(error, null, 0);
-        }
+        proc.communicate_utf8_async(null, cancellable, (source, result) => {
+            let parsed;
+            try {
+                const [, stdout, stderr] = source.communicate_utf8_finish(result);
+                parsed = this._model.parseCurlResult(
+                    source.get_if_exited() ? source.get_exit_status() : -1, stdout, stderr, timeoutSeconds);
+            } catch (error) {
+                // Cancelling only abandons the wait; the child keeps running until --max-time.
+                if (error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                    source.force_exit();
+                parsed = { status: 0, data: null, error: error.message };
+            }
+            if (this._destroyed || generation !== this._requestGeneration)
+                return;
+            callback(parsed.error ? new Error(parsed.error) : null, parsed.data, parsed.status);
+        });
     }
 
     _refresh(forceOutlook = false, outlookOnly = false) {
@@ -500,7 +480,6 @@ class ClankermuxUsageApplet extends Applet.Applet {
                 this._lastWorkloadsError = error;
                 this._outlookSchedule.complete(Date.now(), true);
             }
-            this._createSession();
             this._render();
             return false;
         });
@@ -519,10 +498,7 @@ class ClankermuxUsageApplet extends Applet.Applet {
     }
 
     _errorMessage(error) {
-        const message = String(error?.message || error || 'Connection failed');
-        if (message.includes('Could not connect'))
-            return 'Could not connect to Clankermux';
-        return message;
+        return String(error?.message || error || 'Connection failed');
     }
 
     _render() {
@@ -733,8 +709,6 @@ class ClankermuxUsageApplet extends Applet.Applet {
             Mainloop.source_remove(this._forecastClockId);
             this._forecastClockId = 0;
         }
-        if (this._session)
-            this._session.abort();
         if (this.settings)
             this.settings.finalize();
     }

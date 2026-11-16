@@ -476,11 +476,46 @@ var UsageModel = (() => {
         return `in ${formatDuration(timestamp - nowMs)}`;
     }
 
+    function curlArgs(url, timeoutSeconds, userAgent) {
+        return [
+            'curl', '--disable', '--silent', '--show-error', '--location',
+            '--max-time', String(timeoutSeconds),
+            '--user-agent', userAgent,
+            '--header', 'Accept: application/json',
+            '--write-out', '\n%{http_code}',
+            '--', url,
+        ];
+    }
+
+    function parseCurlResult(exitStatus, stdout, stderr, timeoutSeconds) {
+        if (exitStatus === 6 || exitStatus === 7)
+            return { status: 0, data: null, error: 'Could not connect to Clankermux' };
+        if (exitStatus === 28)
+            return { status: 0, data: null, error: `Refresh timed out after ${timeoutSeconds}s` };
+        if (exitStatus !== 0) {
+            const line = String(stderr || '').split('\n')[0].replace(/^curl: \(\d+\)\s*/, '').trim();
+            return { status: 0, data: null, error: (line || `curl exited with status ${exitStatus}`).slice(0, 160) };
+        }
+        const text = String(stdout || '');
+        const split = text.lastIndexOf('\n');
+        const trailer = split >= 0 ? text.slice(split + 1) : '';
+        if (!/^\d{3}$/.test(trailer))
+            return { status: 0, data: null, error: 'Malformed curl output' };
+        const status = Number(trailer);
+        if (status < 200 || status >= 300)
+            return { status, data: null, error: `HTTP ${status}` };
+        try {
+            return { status, data: JSON.parse(text.slice(0, split)), error: null };
+        } catch (error) {
+            return { status, data: null, error: 'Invalid JSON response' };
+        }
+    }
+
     return {
         accountState, accountWindows, buildView, clampPercent,
-        createRefreshCycle, credentialNotice, formatDuration, formatReset,
+        createRefreshCycle, credentialNotice, curlArgs, formatDuration, formatReset,
         formatTimestamp, humanizeStatus, measurementNotice, normalizeBaseUrl,
-        panelWorkloadLabel, providerUsageRows, forecastSummary, workloadTooltipLine,
+        panelWorkloadLabel, parseCurlResult, providerUsageRows, forecastSummary, workloadTooltipLine,
         workloadsView, timestampMs,
     };
 })();
